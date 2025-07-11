@@ -223,7 +223,6 @@ def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_clas
     x1 = Dropout(0.25)(x1)
     x1 = Conv1D(filters=64, kernel_size=2, activation='relu')(x1)
     x1 = BatchNormalization()(x1)
-    x1 = Dropout(0.25)(x1)
     x1 = Flatten()(x1)
 
     flat_input = Input(shape=flat_input_shape, name="flat_input")
@@ -283,11 +282,13 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
         test_dataset = test_dataset.cache().batch(256).prefetch(tf.data.AUTOTUNE)
 
         model.fit(
-            train_dataset,
+            X_train,
+            y_train,
             epochs=10,
-            validation_data=test_dataset,
+            batch_size=32,
+            validation_data=(X_test, y_test),
             verbose=1,
-            class_weight=kwargs.get("class_weight_dict"),
+            class_weight=kwargs.get("class_weight_dict")
         )
         model.save(model_path)
         with open(model_path + ".flat_features.json", "w") as f:
