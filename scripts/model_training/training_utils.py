@@ -217,14 +217,12 @@ def preprocess_data(
 
 def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_classes):
     seq_input = Input(shape=sequence_input_shape, name="sequence_input")
-    x1 = Conv1D(filters=32, kernel_size=2)(seq_input)
+    x1 = Conv1D(filters=32, kernel_size=2, activation='relu')(seq_input)
     x1 = BatchNormalization()(x1)
-    x1 = Activation('relu')(x1)
     x1 = MaxPooling1D(pool_size=2)(x1)
     x1 = Dropout(0.25)(x1)
-    x1 = Conv1D(filters=64, kernel_size=2)(x1)
+    x1 = Conv1D(filters=64, kernel_size=2, activation='relu')(x1)
     x1 = BatchNormalization()(x1)
-    x1 = Activation('relu')(x1)
     x1 = Dropout(0.25)(x1)
     x1 = Flatten()(x1)
 
@@ -275,14 +273,21 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
             (X[0].shape[1], X[0].shape[2]), (X[1].shape[1],), y.shape[1]
         )
         model.summary()
+
+        # Create tf.data datasets
+        train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
+        test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test))
+
+        # Optimize datasets
+        train_dataset = train_dataset.cache().batch(256).prefetch(tf.data.AUTOTUNE)
+        test_dataset = test_dataset.cache().batch(256).prefetch(tf.data.AUTOTUNE)
+
         model.fit(
-            X_train,
-            y_train,
+            train_dataset,
             epochs=10,
-            batch_size=32,
-            validation_data=(X_test, y_test),
+            validation_data=test_dataset,
             verbose=1,
-            class_weight=kwargs.get("class_weight_dict")
+            class_weight=kwargs.get("class_weight_dict"),
         )
         model.save(model_path)
         with open(model_path + ".flat_features.json", "w") as f:
@@ -364,7 +369,7 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
                     print(f"Error uploading RF model to Hugging Face: {e}")
 
         elif model_type == "lgbm":
-            model = lgb.LGBMClassifier(random_state=42, class_weight="balanced")
+            model = lgb.LGBMClassifier(random_state=42, class_weight="balanced", device='gpu')
             model.fit(
                 X_train,
                 y_train,

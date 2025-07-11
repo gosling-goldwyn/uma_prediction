@@ -1,0 +1,12 @@
+feat: Enhance prediction scripts and fix CNN prediction issue
+
+- Refactor `predict_latest_race.py` to accept URL arguments and output individual model predictions (probabilities and derived categories).
+- Fix `predict_ensemble.py` issues:
+    - Resolve `ModuleNotFoundError` by ensuring proper module execution.
+    - Address `ValueError` related to categorical features by handling unseen categories.
+    - Correct horse name extraction from scraped data.
+    - Eliminate `FutureWarning` by ensuring consistent data types for missing historical data.
+- Downgrade scikit-learn version to 1.6.1 to resolve `InconsistentVersionWarning`.
+- Improve CNN model architecture in `training_utils.py` to address "Others" prediction bias (requires retraining).
+- Add `download_models.py` for robust model downloading from Hugging Face Hub.
+- Update `README.md` to reflect new features and project structure.

@@ -58,15 +58,21 @@ def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_featur
         return df_processed
 
     elif model_type == "lgbm":
-        categorical_features = [col for col in df_processed.columns if df_processed[col].dtype == "object"]
-        for col in categorical_features:
-            # NaNを'missing'として扱う
-            df_processed[col] = df_processed[col].fillna('missing')
-            if categorical_features_with_categories and col in categorical_features_with_categories:
-                # 訓練時に使用したカテゴリを明示的に指定
-                df_processed[col] = pd.Categorical(df_processed[col], categories=categorical_features_with_categories[col])
-            else:
-                df_processed[col] = df_processed[col].astype("category")
+        if categorical_features_with_categories:
+            for col, known_categories in categorical_features_with_categories.items():
+                if col in df_processed.columns:
+                    # Fill any existing NaNs with 'missing'
+                    df_processed[col] = df_processed[col].fillna('missing')
+                    
+                    # Identify values that are not in the known training categories
+                    # and replace them with 'missing'. This handles new/unseen categories.
+                    is_known = df_processed[col].isin(known_categories)
+                    df_processed.loc[~is_known, col] = 'missing'
+                    
+                    # Convert the column to the CategoricalDtype with categories from training
+                    df_processed[col] = pd.Categorical(df_processed[col], categories=known_categories)
+
+        # Reindex to ensure column order and presence matches training data
         if expected_columns is not None:
             df_processed = df_processed.reindex(columns=expected_columns, fill_value=0)
         return df_processed

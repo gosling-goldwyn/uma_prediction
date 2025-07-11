@@ -5,6 +5,7 @@ import numpy as np
 
 # GPUが利用可能か確認し、設定を行う
 import tensorflow as tf
+
 physical_devices = tf.config.list_physical_devices("GPU")
 if physical_devices:
     try:
@@ -16,9 +17,19 @@ else:
     print("No GPU devices found. Using CPU.")
 
 from scripts.prediction_utils.model_loader import load_all_models
-from scripts.prediction_utils.constants import URL_PREFIX, DATA_FILE, INDEX_HEAD, PREV_RACE_HEAD, FINAL_COLS
+from scripts.prediction_utils.constants import (
+    URL_PREFIX,
+    DATA_FILE,
+    INDEX_HEAD,
+    PREV_RACE_HEAD,
+    FINAL_COLS,
+)
 from scripts.data_acquisition.debug_scraper import fetch_page, parse_race_details
-from scripts.prediction_utils.data_preprocessor import preprocess_data_for_prediction, get_race_turn, process_horse_weight
+from scripts.prediction_utils.data_preprocessor import (
+    preprocess_data_for_prediction,
+    get_race_turn,
+    process_horse_weight,
+)
 from scripts.prediction_utils.predictor import predict_with_all_models
 from scripts.prediction_utils.ensembler import ensemble_predictions
 from scripts.prediction_utils.value_betting import identify_value_bets
@@ -29,7 +40,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
     print(
         f"Starting scraping and ensemble prediction for race: {race_url} with target mode: {target_mode}..."
     )
-    
+
     all_models = load_all_models()
     if not all_models or not all_models[target_mode]:
         print(f"No models loaded for target mode: {target_mode}. Exiting.")
@@ -62,9 +73,9 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         field_cond_match = re.search(r"馬場:(\S)", race_data01_text)
         field_cond = field_cond_match.group(1) if field_cond_match else ""
 
-        kai = int(re.search(r'\d+', race_data02_spans[0]).group(0))
+        kai = int(re.search(r"\d+", race_data02_spans[0]).group(0))
         place_name = race_data02_spans[1]
-        day_of_kai = int(re.search(r'\d+', race_data02_spans[2]).group(0))
+        day_of_kai = int(re.search(r"\d+", race_data02_spans[2]).group(0))
 
     except Exception as e:
         print(f"Could not parse race overview info: {e}. Exiting.")
@@ -112,7 +123,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         return
 
     for _, detail_row in df_detail.iterrows():
-        horse_name = detail_row.get("馬名", "")
+        horse_name = detail_row.get("horse_name", "")
 
         # parquetから馬の最新データを取得
         # 推論対象レース日付以前で、その馬の最も新しいレースのデータを探す
@@ -127,10 +138,21 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
 
         if horse_data_from_parquet.empty:
             print(
-                f"Warning: No historical data found for horse '{horse_name}' in parquet. Filling with NaNs."
+                f"Warning: No historical data found for horse '{horse_name}' in parquet. Filling with defaults."
             )
+            # Define default values based on expected data types
             extracted_index_data = {col: np.nan for col in INDEX_HEAD}
-            parsed_previous_race_data = {col: np.nan for col in PREV_RACE_HEAD}
+
+            parsed_previous_race_data = {}
+            object_cols_in_prev = ["place", "weather", "field", "condi"]
+            for col in PREV_RACE_HEAD:
+                # Check if any of the object column substrings are in the column name
+                if any(sub in col for sub in object_cols_in_prev):
+                    parsed_previous_race_data[col] = (
+                        "missing"  # Default for object/string types
+                    )
+                else:
+                    parsed_previous_race_data[col] = np.nan  # Default for numeric types
         else:
             latest_horse_row = horse_data_from_parquet.iloc[0]
             extracted_index_data = {
@@ -173,7 +195,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
 
     print("Preprocessing data for all models...")
     preprocessed_data_for_models = {}
-    
+
     # Preprocess for RF models
     for horse_info in ["included", "excluded"]:
         model_key = f"rf_{horse_info}"
@@ -182,62 +204,92 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
             # Exclude horse info if needed for preprocessing
             df_rf_prep = df_final_for_prediction.copy()
             if horse_info == "excluded":
-                df_rf_prep = df_rf_prep.drop(columns=["horse_num", "horse_weight", "weight_change"], errors="ignore")
+                df_rf_prep = df_rf_prep.drop(
+                    columns=["horse_num", "horse_weight", "weight_change"],
+                    errors="ignore",
+                )
             preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
-                df_rf_prep, "rf", target_maps=rf_target_maps, expected_columns=all_models[target_mode][model_key].get("expected_columns")
+                df_rf_prep,
+                "rf",
+                target_maps=rf_target_maps,
+                expected_columns=all_models[target_mode][model_key].get(
+                    "expected_columns"
+                ),
             )
-        
+
     # Preprocess for LGBM models
     for horse_info in ["included", "excluded"]:
         model_key = f"lgbm_{horse_info}"
         if model_key in all_models[target_mode]:
             df_lgbm_prep = df_final_for_prediction.copy()
             if horse_info == "excluded":
-                df_lgbm_prep = df_lgbm_prep.drop(columns=["horse_num", "horse_weight", "weight_change"], errors="ignore")
+                df_lgbm_prep = df_lgbm_prep.drop(
+                    columns=["horse_num", "horse_weight", "weight_change"],
+                    errors="ignore",
+                )
             preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
-                df_lgbm_prep, "lgbm", 
-                expected_columns=all_models[target_mode][model_key].get("expected_columns"),
-                categorical_features_with_categories=all_models[target_mode][model_key].get("categorical_features_with_categories")
+                df_lgbm_prep,
+                "lgbm",
+                expected_columns=all_models[target_mode][model_key].get(
+                    "expected_columns"
+                ),
+                categorical_features_with_categories=all_models[target_mode][
+                    model_key
+                ].get("categorical_features_with_categories"),
             )
 
     # Preprocess for CNN model
     model_key = "cnn_included"
     if model_key in all_models[target_mode]:
         cnn_flat_features = all_models[target_mode][model_key].get("flat_features")
-        cnn_imputation_values = all_models[target_mode][model_key].get("imputation_values")
+        cnn_imputation_values = all_models[target_mode][model_key].get(
+            "imputation_values"
+        )
         preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
-            df_final_for_prediction.copy(), "cnn", 
-            flat_features_columns=cnn_flat_features, 
-            imputation_values=cnn_imputation_values
+            df_final_for_prediction.copy(),
+            "cnn",
+            flat_features_columns=cnn_flat_features,
+            imputation_values=cnn_imputation_values,
         )
 
     print("Making predictions with individual models...")
-    individual_predictions = predict_with_all_models(all_models, preprocessed_data_for_models, target_mode)
+    individual_predictions = predict_with_all_models(
+        all_models, preprocessed_data_for_models, target_mode
+    )
 
     print("Ensembling predictions...")
     final_predicted_ranks = ensemble_predictions(individual_predictions, target_mode)
 
     print("\n--- Ensemble Prediction Results ---")
     for i, (_, row) in enumerate(df_final_for_prediction.iterrows()):
-        print(f"馬名: {row['horse_name']}, 予測順位カテゴリ: {final_predicted_ranks[i]}")
+        print(
+            f"馬名: {row['horse_name']}, 予測順位カテゴリ: {final_predicted_ranks[i]}"
+        )
 
     # Identify and display value bets
     # Check if odds data is available and valid before proceeding with value betting analysis
-    if 'odds' in df_final_for_prediction.columns and \
-       not df_final_for_prediction['odds'].astype(str).str.contains('---').all() and \
-       df_final_for_prediction['odds'].dropna().empty == False:
-        
-        value_bets_df = identify_value_bets(df_final_for_prediction, individual_predictions['rf_included'], target_mode) 
-        
+    if (
+        "odds" in df_final_for_prediction.columns
+        and not df_final_for_prediction["odds"].astype(str).str.contains("---").all()
+        and not df_final_for_prediction["odds"].dropna().empty
+    ):
+        value_bets_df = identify_value_bets(
+            df_final_for_prediction, individual_predictions["rf_included"], target_mode
+        )
+
         print("\n--- Value Betting Analysis ---")
         if not value_bets_df.empty:
             for _, vb_row in value_bets_df.iterrows():
-                print(f"馬名: {vb_row['horse_name']}, オッズ: {vb_row['odds']:.2f}, 予測確率: {vb_row['model_prob']:.2%}, 期待値: {vb_row['expected_value']:.2f}, バリューベット: {vb_row['is_value_bet']}")
+                print(
+                    f"馬名: {vb_row['horse_name']}, オッズ: {vb_row['odds']:.2f}, 予測確率: {vb_row['model_prob']:.2%}, 期待値: {vb_row['expected_value']:.2f}, バリューベット: {vb_row['is_value_bet']}"
+                )
         else:
             print("No value bets identified or odds data missing.")
     else:
         print("\n--- Value Betting Analysis ---")
-        print("Odds data not available or invalid for this race. Skipping value betting analysis.")
+        print(
+            "Odds data not available or invalid for this race. Skipping value betting analysis."
+        )
 
 
 if __name__ == "__main__":
@@ -246,7 +298,9 @@ if __name__ == "__main__":
         target_mode_to_use = "default"
         if len(sys.argv) > 2 and sys.argv[2] == "top3":
             target_mode_to_use = "top3"
-        predict_ensemble_race_from_url(race_url_to_predict, target_mode=target_mode_to_use)
+        predict_ensemble_race_from_url(
+            race_url_to_predict, target_mode=target_mode_to_use
+        )
     else:
         print("Usage: python -m scripts.predict_ensemble <race_url> [target_mode]")
         print(

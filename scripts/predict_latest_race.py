@@ -1,15 +1,10 @@
-import os
-import re
-import pandas as pd
-import json
-import requests
-from bs4 import BeautifulSoup
-import numpy as np
-import joblib
-import tensorflow as tf
 import sys
+import pandas as pd
+import re
+import numpy as np
 
 # GPUが利用可能か確認し、設定を行う
+import tensorflow as tf
 physical_devices = tf.config.list_physical_devices("GPU")
 if physical_devices:
     try:
@@ -20,401 +15,24 @@ if physical_devices:
 else:
     print("No GPU devices found. Using CPU.")
 
-# --- Constants ---
-URL_PREFIX = "https://db.netkeiba.com"
-DATA_FILE = "data/index_dataset.parquet"  # parquetファイルへのパス
-
-from scripts.model_training.train import get_model_path
-
-# レースの回り順
-COUNTERCLOCKWISE_PLACES = ["東京", "中京", "新潟"]
-CLOCKWISE_PLACES = ["中山", "阪神", "京都", "札幌", "函館", "福島", "小倉"]
-
-# 地方競馬場と対応する数値 (jiro8は使わないが、過去データの日付生成に必要かもしれないので残す)
-PLACE_NUM = {
-    "札幌": "01",
-    "函館": "02",
-    "福島": "03",
-    "新潟": "04",
-    "東京": "05",
-    "中山": "06",
-    "中京": "07",
-    "京都": "08",
-    "阪神": "09",
-    "小倉": "10",
-}
-
-# スピード指数関連のカラム (parquetから取得する)
-INDEX_HEAD = [
-    "lead_idx",
-    "1st_lead_idx",
-    "2nd_lead_idx",
-    "3rd_lead_idx",
-    "4th_lead_idx",
-    "5th_lead_idx",
-    "pace_idx",
-    "1st_pace_idx",
-    "2nd_pace_idx",
-    "3rd_pace_idx",
-    "4th_pace_idx",
-    "5th_pace_idx",
-    "rising_idx",
-    "1st_rising_idx",
-    "2nd_rising_idx",
-    "3rd_rising_idx",
-    "4th_rising_idx",
-    "5th_rising_idx",
-    "speed_idx",
-    "1st_speed_idx",
-    "2nd_speed_idx",
-    "3rd_speed_idx",
-    "4th_speed_idx",
-    "5th_speed_idx",
-]
-
-# 前走データカラム (parquetから取得する)
-PREV_RACE_HEAD = [
-    "1st_place",
-    "1st_weather",
-    "2nd_place",
-    "2nd_weather",
-    "3rd_place",
-    "3rd_weather",
-    "4th_place",
-    "4th_weather",
-    "5th_place",
-    "5th_weather",
-    "1st_field",
-    "1st_dist",
-    "1st_condi",
-    "2nd_field",
-    "2nd_dist",
-    "2nd_condi",
-    "3rd_field",
-    "3rd_dist",
-    "3rd_condi",
-    "4th_field",
-    "4th_dist",
-    "4th_condi",
-    "5th_field",
-    "5th_dist",
-    "5th_condi",
-    "1st_sum_num",
-    "1st_horse_num",
-    "2nd_sum_num",
-    "2nd_horse_num",
-    "3rd_sum_num",
-    "3rd_horse_num",
-    "4th_sum_num",
-    "4th_horse_num",
-    "5th_sum_num",
-    "5th_horse_num",
-    "1st_rank",
-    "2nd_rank",
-    "3rd_rank",
-    "4th_rank",
-    "5th_rank",
-]
-
-# 最終的な結合データフレームのカラム
-FINAL_COLS = (
-    [
-        "year",
-        "date",
-        "month",
-        "race_num",
-        "field",
-        "dist",
-        "turn",
-        "weather",
-        "field_cond",
-        "kai",
-        "day",
-        "place",
-        "sum_num",
-        "prize",
-        "rank",
-        "horse_num",
-        "horse_name",
-        "sex",
-        "age",
-        "weight_carry",
-        "horse_weight",
-        "weight_change",
-        "jockey",
-        "time",
-        "l_days",
-    ]
-    + INDEX_HEAD
-    + PREV_RACE_HEAD
-)
+from scripts.prediction_utils.model_loader import load_all_models
+from scripts.prediction_utils.constants import URL_PREFIX, DATA_FILE, INDEX_HEAD, PREV_RACE_HEAD, FINAL_COLS
+from scripts.data_acquisition.debug_scraper import fetch_page, parse_race_details
+from scripts.prediction_utils.data_preprocessor import preprocess_data_for_prediction, get_race_turn, process_horse_weight
+from scripts.prediction_utils.predictor import predict_with_all_models
+from scripts.prediction_utils.ensembler import ensemble_predictions
+from scripts.prediction_utils.value_betting import identify_value_bets
 
 
-# --- Utility Functions ---
-def fetch_page(url: str):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    try:
-        res = requests.get(url, headers=headers)
-        res.raise_for_status()
-        res.encoding = "EUC-JP"
-        return BeautifulSoup(res.text, "html.parser")
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching {url}: {e}")
-        return None
-
-
-def parse_race_details(soup: BeautifulSoup) -> pd.DataFrame:
-    table = soup.find("table", class_="Shutuba_Table")
-    if not table:
-        return pd.DataFrame()
-    df = pd.read_html(str(table))[0]
-    # カラム名をフラット化し、不要な空白を削除
-    # MultiIndexの場合、タプルの最後の要素を使用
-    df.columns = [col[-1].strip() if isinstance(col, tuple) else col.strip() for col in df.columns.values]
-
-    # '馬 番'カラムを特定し、数値のみの行をフィルタリング
-    horse_num_col_candidates = [
-        col for col in df.columns if "馬" in col and "番" in col
-    ]
-    if not horse_num_col_candidates:
-        print("Error: '馬 番' column not found in parsed table.")
-        return pd.DataFrame()
-    horse_num_col = horse_num_col_candidates[0]
-
-    df = df[df[horse_num_col].astype(str).str.isdigit()]
-
-    # 性齢カラムの特定
-    sex_age_col_candidates = [col for col in df.columns if "性齢" in col]
-    if not sex_age_col_candidates:
-        print("Error: '性齢' column not found in parsed table.")
-        return pd.DataFrame()
-    sex_age_col = sex_age_col_candidates[0]
-
-    df.rename(
-        columns={
-            "枠": "waku",
-            horse_num_col: "horse_num",
-            "印": "check_mark",
-            sex_age_col: "sex_age",
-            "斤量": "weight_carry",
-            "騎手": "jockey",
-            "厩舎": "stable",
-            "馬体重 (増減)": "horse_weight_change",
-            "人気": "popularity",
-            "Unnamed: 9_level_1": "odds", # Explicitly rename the odds column
-        },
-        inplace=True,
-    )
-    # 馬名カラムは既に正しく設定されているはずなので、ここではリネームしない
-    # df.rename(columns={"馬名": "horse_name"}, inplace=True) # 削除またはコメントアウト
-
-    # The odds column is now explicitly renamed, so this logic is no longer needed.
-    # Keeping it commented out for reference.
-    # odds_col_candidates = [
-    #     col for col in df.columns if "オッズ" in col or "人気" in col
-    # ]
-    # if len(odds_col_candidates) >= 2:
-    #     popularity_col_idx = -1
-    #     for i, col in enumerate(df.columns):
-    #         if "人気" in col:
-    #             popularity_col_idx = i
-    #             break
-
-    #     if popularity_col_idx > 0:
-    #         odds_col = df.columns[popularity_col_idx - 1]
-    #         df.rename(columns={odds_col: "odds"}, inplace=True)
-    #     else:
-    #         print(
-    #             "Warning: Could not reliably find 'オッズ' column based on '人気' position. Setting to default."
-    #         )
-    #         df["odds"] = np.nan
-    # else:
-    #     print(
-    #         "Warning: Not enough 'オッズ' or '人気' related columns found. Setting 'odds' to default."
-    #     )
-    #     df["odds"] = np.nan
-
-    return df
-
-
-def get_race_turn(place: str) -> str:
-    if place in CLOCKWISE_PLACES:
-        return "右"
-    elif place in COUNTERCLOCKWISE_PLACES:
-        return "左"
-    else:
-        return "不明"
-
-
-def process_horse_weight(weight_str: str) -> tuple:
-    if not isinstance(weight_str, str) or weight_str == "---":
-        return -1, 0
-    match = re.match(r"(\d+)\((\+?-?\d+)\)", weight_str)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    elif weight_str.isdigit():
-        return int(weight_str), 0
-    return -1, 0
-
-
-# --- Model Prediction Functions ---
-def preprocess_data_for_prediction(df, model_type="cnn", flat_features_columns=None, imputation_values=None):
-    if model_type == "cnn":
-        sequence_features = [
-            "1st_speed_idx",
-            "2nd_speed_idx",
-            "3rd_speed_idx",
-            "4th_speed_idx",
-            "5th_speed_idx",
-            "1st_lead_idx",
-            "2nd_lead_idx",
-            "3rd_lead_idx",
-            "4th_lead_idx",
-            "5th_lead_idx",
-            "1st_pace_idx",
-            "2nd_pace_idx",
-            "3rd_pace_idx",
-            "4th_pace_idx",
-            "5th_pace_idx",
-            "1st_rising_idx",
-            "2nd_rising_idx",
-            "3rd_rising_idx",
-            "4th_rising_idx",
-            "5th_rising_idx",
-        ]
-        X_seq_df = df[sequence_features].copy()
-        for col in sequence_features:
-            # Use imputation_values if available, otherwise fallback to 0
-            fill_value = imputation_values.get(col, 0) if imputation_values else 0
-            X_seq_df[col] = pd.to_numeric(X_seq_df[col], errors="coerce").fillna(fill_value)
-        X_seq = X_seq_df.values.reshape(len(df), 5, len(sequence_features) // 5)
-
-        flat_numerical_features = [
-            "age",
-            "weight_carry",
-            "horse_num",
-            "horse_weight",
-            "weight_change",
-        ]
-        flat_categorical_features = ["sex", "jockey", "field", "weather", "place"]
-        X_flat_num = df[flat_numerical_features].copy()
-        for col in X_flat_num.columns:
-            # Use imputation_values if available, otherwise fallback to 0
-            fill_value = imputation_values.get(col, 0) if imputation_values else 0
-            X_flat_num[col] = pd.to_numeric(X_flat_num[col], errors="coerce").fillna(fill_value)
-        X_flat_cat = df[flat_categorical_features].copy()
-        for col in X_flat_cat.columns:
-            # Use imputation_values if available, otherwise fallback to "missing"
-            fill_value = imputation_values.get(col, "missing") if imputation_values else "missing"
-            X_flat_cat[col] = X_flat_cat[col].astype(str).fillna(fill_value)
-        X_flat_cat_dummies = pd.get_dummies(
-            X_flat_cat, columns=flat_categorical_features
-        )
-
-        X_flat = pd.concat([X_flat_num, X_flat_cat_dummies], axis=1)
-
-        if flat_features_columns:
-            X_flat = X_flat.reindex(columns=flat_features_columns, fill_value=0)
-        return [X_seq, X_flat]
-    else:
-        raise ValueError("This function is designed for CNN prediction.")
-
-
-def load_model(target_mode="default"):
-    model_path = get_model_path("cnn", target_mode)
-    if os.path.exists(model_path):
-        model = tf.keras.models.load_model(model_path)
-        
-        flat_features_json_path = model_path + ".flat_features.json"
-        flat_features_columns = (
-            json.load(open(flat_features_json_path, "r")) if os.path.exists(flat_features_json_path) else None
-        )
-        
-        imputation_values_json_path = model_path + ".imputation_values.json"
-        imputation_values = (
-            json.load(open(imputation_values_json_path, "r")) if os.path.exists(imputation_values_json_path) else None
-        )
-        
-        return model, flat_features_columns, imputation_values
-    else:
-        print(f"CNN Model not found at {model_path}. Please train the model first.")
-        return None, None, None
-
-
-def predict_rank(model, new_data_processed, target_mode="default"):
-    if not model or new_data_processed[0].size == 0:
-        return None
-    
-    probabilities = model.predict(new_data_processed)
-    
-    if target_mode == "default":
-        # Class indices: 0 for 1st, 1 for 2-3rd, 2 for Others
-        
-        # Create a list of (horse_index, prob_1st, prob_2_3rd)
-        horse_probs = []
-        for i in range(len(probabilities)):
-            horse_probs.append((i, probabilities[i][0], probabilities[i][1])) # (index, prob_1st, prob_2-3rd)
-        
-        # Sort by prob_1st in descending order
-        horse_probs_sorted_by_1st = sorted(horse_probs, key=lambda x: x[1], reverse=True)
-        
-        # Initialize all predictions to Others
-        final_predictions = ["Others"] * len(probabilities)
-        
-        # Assign 1st place
-        if len(horse_probs_sorted_by_1st) > 0:
-            first_place_horse_idx = horse_probs_sorted_by_1st[0][0]
-            final_predictions[first_place_horse_idx] = "1st"
-            
-            # Remove the 1st place horse from consideration for 2-3rd
-            remaining_horses = [hp for hp in horse_probs_sorted_by_1st if hp[0] != first_place_horse_idx]
-            
-            # Sort remaining by prob_2-3rd in descending order
-            remaining_horses_sorted_by_2_3rd = sorted(remaining_horses, key=lambda x: x[2], reverse=True)
-            
-            # Assign 2-3rd places (up to 2 horses)
-            assigned_2_3rd_count = 0
-            for hp in remaining_horses_sorted_by_2_3rd:
-                if assigned_2_3rd_count < 2:
-                    final_predictions[hp[0]] = "2-3rd"
-                    assigned_2_3rd_count += 1
-                else:
-                    break
-        
-        return final_predictions
-        
-    elif target_mode == "top3":
-        # Class indices: 0 for 1-3rd, 1 for Others
-        # Similar logic, but assign top 3 horses to "1-3rd"
-        horse_probs = []
-        for i in range(len(probabilities)):
-            horse_probs.append((i, probabilities[i][0])) # (index, prob_1-3rd)
-        
-        horse_probs_sorted_by_1_3rd = sorted(horse_probs, key=lambda x: x[1], reverse=True)
-        
-        final_predictions = ["Others"] * len(probabilities)
-        
-        assigned_1_3rd_count = 0
-        for hp in horse_probs_sorted_by_1_3rd:
-            if assigned_1_3rd_count < 3:
-                final_predictions[hp[0]] = "1-3rd"
-                assigned_1_3rd_count += 1
-            else:
-                break
-        return final_predictions
-    else:
-        raise ValueError(f"Unknown target_mode: {target_mode}")
-
-
-# --- Main Logic for Prediction ---
+# --- Main Logic for Individual Model Prediction ---
 def predict_race_from_url(race_url: str, target_mode="default"):
     print(
-        f"Starting scraping and prediction for race: {race_url} with target mode: {target_mode}..."
+        f"Starting scraping and individual model prediction for race: {race_url} with target mode: {target_mode}..."
     )
-    model, flat_features_columns, imputation_values = load_model(target_mode=target_mode)
-    if not model:
+    
+    all_models = load_all_models()
+    if not all_models or not all_models[target_mode]:
+        print(f"No models loaded for target mode: {target_mode}. Exiting.")
         return
 
     soup_overview = fetch_page(race_url)
@@ -469,6 +87,7 @@ def predict_race_from_url(race_url: str, target_mode="default"):
 
     df_detail = parse_race_details(soup_overview)
     if df_detail.empty:
+        print("Error: df_detail is empty after parsing race details.")
         return
 
     base_race_info["sum_num"] = len(df_detail)
@@ -493,7 +112,7 @@ def predict_race_from_url(race_url: str, target_mode="default"):
         return
 
     for _, detail_row in df_detail.iterrows():
-        horse_name = detail_row.get("馬名", "")
+        horse_name = detail_row.get("horse_name", "")
 
         # parquetから馬の最新データを取得
         # 推論対象レース日付以前で、その馬の最も新しいレースのデータを探す
@@ -508,10 +127,19 @@ def predict_race_from_url(race_url: str, target_mode="default"):
 
         if horse_data_from_parquet.empty:
             print(
-                f"Warning: No historical data found for horse '{horse_name}' in parquet. Filling with NaNs."
+                f"Warning: No historical data found for horse '{horse_name}' in parquet. Filling with defaults."
             )
+            # Define default values based on expected data types
             extracted_index_data = {col: np.nan for col in INDEX_HEAD}
-            parsed_previous_race_data = {col: np.nan for col in PREV_RACE_HEAD}
+            
+            parsed_previous_race_data = {}
+            object_cols_in_prev = ['place', 'weather', 'field', 'condi']
+            for col in PREV_RACE_HEAD:
+                # Check if any of the object column substrings are in the column name
+                if any(sub in col for sub in object_cols_in_prev):
+                    parsed_previous_race_data[col] = 'missing' # Default for object/string types
+                else:
+                    parsed_previous_race_data[col] = np.nan # Default for numeric types
         else:
             latest_horse_row = horse_data_from_parquet.iloc[0]
             extracted_index_data = {
@@ -552,21 +180,84 @@ def predict_race_from_url(race_url: str, target_mode="default"):
         return
     df_final_for_prediction = pd.DataFrame(all_race_data, columns=FINAL_COLS)
 
-    print("Preprocessing data for CNN prediction...")
-    X_predict = preprocess_data_for_prediction(
-        df_final_for_prediction.copy(),
-        model_type="cnn",
-        flat_features_columns=flat_features_columns,
-        imputation_values=imputation_values
-    )
+    print("Preprocessing data for all models...")
+    preprocessed_data_for_models = {}
+    
+    # Preprocess for RF models
+    for horse_info in ["included", "excluded"]:
+        model_key = f"rf_{horse_info}"
+        if model_key in all_models[target_mode]:
+            rf_target_maps = all_models[target_mode][model_key].get("target_maps")
+            # Exclude horse info if needed for preprocessing
+            df_rf_prep = df_final_for_prediction.copy()
+            if horse_info == "excluded":
+                df_rf_prep = df_rf_prep.drop(columns=["horse_num", "horse_weight", "weight_change"], errors="ignore")
+            preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
+                df_rf_prep, "rf", target_maps=rf_target_maps, expected_columns=all_models[target_mode][model_key].get("expected_columns")
+            )
+        
+    # Preprocess for LGBM models
+    for horse_info in ["included", "excluded"]:
+        model_key = f"lgbm_{horse_info}"
+        if model_key in all_models[target_mode]:
+            df_lgbm_prep = df_final_for_prediction.copy()
+            if horse_info == "excluded":
+                df_lgbm_prep = df_lgbm_prep.drop(columns=["horse_num", "horse_weight", "weight_change"], errors="ignore")
+            preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
+                df_lgbm_prep, "lgbm", 
+                expected_columns=all_models[target_mode][model_key].get("expected_columns"),
+                categorical_features_with_categories=all_models[target_mode][model_key].get("categorical_features_with_categories")
+            )
 
-    if X_predict[0].size == 0:
-        return
-    predicted_ranks = predict_rank(model, X_predict, target_mode=target_mode)
+    # Preprocess for CNN model
+    model_key = "cnn_included"
+    if model_key in all_models[target_mode]:
+        cnn_flat_features = all_models[target_mode][model_key].get("flat_features")
+        cnn_imputation_values = all_models[target_mode][model_key].get("imputation_values")
+        preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
+            df_final_for_prediction.copy(), "cnn", 
+            flat_features_columns=cnn_flat_features, 
+            imputation_values=cnn_imputation_values
+        )
 
-    print("\n--- Prediction Results ---")
+    print("Making predictions with individual models...")
+    individual_predictions = predict_with_all_models(all_models, preprocessed_data_for_models, target_mode)
+
+    print("\n--- Individual Model Prediction Results ---")
     for i, (_, row) in enumerate(df_final_for_prediction.iterrows()):
-        print(f"馬名: {row['horse_name']}, 予測順位カテゴリ: {predicted_ranks[i]}")
+        print(f"\n馬名: {row['horse_name']}")
+        for model_name, preds in individual_predictions.items():
+            if model_name.startswith("rf") or model_name.startswith("lgbm"):
+                # For RF and LGBM, preds are probabilities for each class
+                if target_mode == "default":
+                    # Default: 0=1st, 1=2-3rd, 2=Others
+                    # Determine predicted category based on probabilities
+                    predicted_category = "Others"
+                    if preds[i][0] > preds[i][1] and preds[i][0] > preds[i][2]:
+                        predicted_category = "1st"
+                    elif preds[i][1] > preds[i][0] and preds[i][1] > preds[i][2]:
+                        predicted_category = "2-3rd"
+                    print(f"  {model_name.upper()} - 1着確率: {preds[i][0]:.2%}, 2-3着確率: {preds[i][1]:.2%}, Others確率: {preds[i][2]:.2%}, 予測カテゴリ: {predicted_category}")
+                elif target_mode == "top3":
+                    # Top3: 0=1-3rd, 1=Others
+                    predicted_category = "Others"
+                    if preds[i][0] > preds[i][1]:
+                        predicted_category = "1-3rd"
+                    print(f"  {model_name.upper()} - 1-3着確率: {preds[i][0]:.2%}, Others確率: {preds[i][1]:.2%}, 予測カテゴリ: {predicted_category}")
+            elif model_name.startswith("cnn"):
+                # For CNN, preds are probabilities for each class
+                if target_mode == "default":
+                    predicted_category = "Others"
+                    if preds[i][0] > preds[i][1] and preds[i][0] > preds[i][2]:
+                        predicted_category = "1st"
+                    elif preds[i][1] > preds[i][0] and preds[i][1] > preds[i][2]:
+                        predicted_category = "2-3rd"
+                    print(f"  {model_name.upper()} - 1着確率: {preds[i][0]:.2%}, 2-3着確率: {preds[i][1]:.2%}, Others確率: {preds[i][2]:.2%}, 予測カテゴリ: {predicted_category}")
+                elif target_mode == "top3":
+                    predicted_category = "Others"
+                    if preds[i][0] > preds[i][1]:
+                        predicted_category = "1-3rd"
+                    print(f"  {model_name.upper()} - 1-3着確率: {preds[i][0]:.2%}, Others確率: {preds[i][1]:.2%}, 予測カテゴリ: {predicted_category}")
 
 
 if __name__ == "__main__":
