@@ -369,7 +369,7 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
                     print(f"Error uploading RF model to Hugging Face: {e}")
 
         elif model_type == "lgbm":
-            model = lgb.LGBMClassifier(random_state=42, class_weight="balanced", device='gpu')
+            model = lgb.LGBMClassifier(random_state=42, class_weight="balanced")
             model.fit(
                 X_train,
                 y_train,
