@@ -273,14 +273,6 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
         )
         model.summary()
 
-        # Create tf.data datasets
-        train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
-        test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test))
-
-        # Optimize datasets
-        train_dataset = train_dataset.cache().batch(256).prefetch(tf.data.AUTOTUNE)
-        test_dataset = test_dataset.cache().batch(256).prefetch(tf.data.AUTOTUNE)
-
         model.fit(
             X_train,
             y_train,
