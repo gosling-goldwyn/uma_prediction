@@ -1,9 +1,17 @@
 # added
 spdidx/
 races/
+data/
+models/
 *.pkl
 *.csv
+*.code-workspace
+*.json
 racelist.txt
+*.h5
+.gemini/
+*.html
+.env
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
