@@ -25,6 +25,31 @@ def process_horse_weight(horse_weight_change_str):
 def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_features_columns=None, imputation_values=None, expected_columns=None, categorical_features_with_categories=None):
     df_processed = df.copy()
 
+    # Convert 'l_days' to numeric, coercing errors to NaN
+    if 'l_days' in df_processed.columns:
+        df_processed['l_days'] = pd.to_numeric(df_processed['l_days'], errors='coerce')
+
+    # Feature Engineering
+    rank_cols = ['1st_rank', '2nd_rank', '3rd_rank', '4th_rank', '5th_rank']
+    speed_idx_cols = ['1st_speed_idx', '2nd_speed_idx', '3rd_speed_idx', '4th_speed_idx', '5th_speed_idx']
+
+    # Time-series features
+    df_processed['avg_rank_past_5'] = df_processed[rank_cols].mean(axis=1)
+    df_processed['win_rate_past_5'] = (df_processed[rank_cols] == 1).sum(axis=1) / df_processed[rank_cols].notna().sum(axis=1)
+    df_processed['top_3_rate_past_5'] = (df_processed[rank_cols] <= 3).sum(axis=1) / df_processed[rank_cols].notna().sum(axis=1)
+    df_processed['avg_speed_idx_past_5'] = df_processed[speed_idx_cols].mean(axis=1)
+    df_processed['max_speed_idx_past_5'] = df_processed[speed_idx_cols].max(axis=1)
+    df_processed['std_rank_past_5'] = df_processed[rank_cols].std(axis=1)
+
+    # Interaction features
+    df_processed['jockey_place'] = df_processed['jockey'].astype(str) + '_' + df_processed['place'].astype(str)
+    df_processed['horse_place'] = df_processed['horse_name'].astype(str) + '_' + df_processed['place'].astype(str)
+    df_processed['horse_dist'] = df_processed['horse_name'].astype(str) + '_' + df_processed['dist'].astype(str)
+
+    # Domain knowledge features
+    if 'horse_weight' in df_processed.columns and 'weight_carry' in df_processed.columns:
+        df_processed['weight_ratio'] = df_processed['weight_carry'] / df_processed['horse_weight']
+
     # Ensure imputation_values is a dictionary, even if None is passed
     imputation_values = imputation_values if imputation_values is not None else {}
 

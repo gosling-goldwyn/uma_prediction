@@ -110,6 +110,9 @@ def preprocess_data(
     df["rank"] = pd.to_numeric(df["rank"], errors="coerce")
     df.dropna(subset=["rank"], inplace=True)
 
+    # Convert 'l_days' to numeric, coercing errors to NaN
+    df['l_days'] = pd.to_numeric(df['l_days'], errors='coerce')
+
     def assign_target(rank):
         if target_mode == "default":
             if rank == 1:
@@ -127,6 +130,27 @@ def preprocess_data(
             raise ValueError(f"Unknown target_mode: {target_mode}")
 
     df["target"] = df["rank"].apply(assign_target)
+
+    # Feature Engineering
+    rank_cols = ['1st_rank', '2nd_rank', '3rd_rank', '4th_rank', '5th_rank']
+    speed_idx_cols = ['1st_speed_idx', '2nd_speed_idx', '3rd_speed_idx', '4th_speed_idx', '5th_speed_idx']
+
+    # Time-series features
+    df['avg_rank_past_5'] = df[rank_cols].mean(axis=1)
+    df['win_rate_past_5'] = (df[rank_cols] == 1).sum(axis=1) / df[rank_cols].notna().sum(axis=1)
+    df['top_3_rate_past_5'] = (df[rank_cols] <= 3).sum(axis=1) / df[rank_cols].notna().sum(axis=1)
+    df['avg_speed_idx_past_5'] = df[speed_idx_cols].mean(axis=1)
+    df['max_speed_idx_past_5'] = df[speed_idx_cols].max(axis=1)
+    df['std_rank_past_5'] = df[rank_cols].std(axis=1)
+
+    # Interaction features
+    df['jockey_place'] = df['jockey'].astype(str) + '_' + df['place'].astype(str)
+    df['horse_place'] = df['horse_name'].astype(str) + '_' + df['place'].astype(str)
+    df['horse_dist'] = df['horse_name'].astype(str) + '_' + df['dist'].astype(str)
+
+    # Domain knowledge features
+    df['weight_ratio'] = df['weight_carry'] / df['horse_weight']
+
 
     base_exclude_cols = ["prize", "rank", "time", "target", "date"]
     if exclude_horse_info:
@@ -149,7 +173,7 @@ def preprocess_data(
                 X[col] = X[col].fillna(X[col].mode()[0])
 
     if model_type == "rf":
-        high_cardinality_features = ["horse_name", "jockey"]
+        high_cardinality_features = ["horse_name", "jockey", "jockey_place", "horse_place", "horse_dist"]
         target_maps = {}
 
         # Target Encoding for high cardinality features
@@ -264,22 +288,31 @@ def preprocess_data(
     else:
         raise ValueError("Invalid model_type specified.")
 
-def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_classes, class_weight_dict):
+def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_classes, class_weight_dict, params=None):
+    cnn_params = {
+        "epochs": 10,
+        "batch_size": 32,
+        "conv1d_filters": 32,
+        "dense_units": 128,
+    }
+    if params:
+        cnn_params.update(params)
+
     seq_input = Input(shape=sequence_input_shape, name="sequence_input")
-    x1 = Conv1D(filters=32, kernel_size=2, activation='relu')(seq_input)
+    x1 = Conv1D(filters=cnn_params["conv1d_filters"], kernel_size=2, activation='relu')(seq_input)
     x1 = BatchNormalization()(x1)
     x1 = MaxPooling1D(pool_size=2)(x1)
     x1 = Dropout(0.25)(x1)
-    x1 = Conv1D(filters=64, kernel_size=2, activation='relu')(x1)
+    x1 = Conv1D(filters=cnn_params["conv1d_filters"] * 2, kernel_size=2, activation='relu')(x1) # Double filters for second conv layer
     x1 = BatchNormalization()(x1)
     x1 = Flatten()(x1)
 
     flat_input = Input(shape=flat_input_shape, name="flat_input")
-    x2 = Dense(32, activation="relu")(flat_input)
+    x2 = Dense(cnn_params["dense_units"] // 4, activation="relu")(flat_input) # Use a quarter of dense_units for first dense layer
     x2 = BatchNormalization()(x2)
 
     concatenated = concatenate([x1, x2])
-    final_output = Dense(128, activation="relu")(concatenated)
+    final_output = Dense(cnn_params["dense_units"], activation="relu")(concatenated)
     final_output = BatchNormalization()(final_output)
     final_output = Dropout(0.25)(final_output)
     final_output = Dense(num_classes)(final_output) # No activation here
@@ -295,9 +328,9 @@ def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_clas
     model.compile(
         optimizer="adam", loss=FocalLoss(alpha=alpha_tensor), metrics=["accuracy"]
     )
-    return model
+    return model, cnn_params["epochs"], cnn_params["batch_size"]
 
-def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=None, hf_token=None, hf_model_repo_id=None, **kwargs):
+def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=None, hf_token=None, hf_model_repo_id=None, params=None, **kwargs):
     print(
         f"\n--- Training {model_type.upper()} ({target_mode}, horse_info: {horse_info}) ---"
     )
@@ -324,17 +357,17 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
         X_train = [X_train_seq, X_train_flat]
         X_test = [X_test_seq, X_test_flat]
 
-        model = build_multi_input_cnn_model(
+        model, epochs, batch_size = build_multi_input_cnn_model(
             (X[0].shape[1], X[0].shape[2]), (X[1].shape[1],), y.shape[1],
-            kwargs.get("class_weight_dict")
+            kwargs.get("class_weight_dict"), params=params
         )
         model.summary()
 
         model.fit(
             X_train,
             y_train,
-            epochs=10,
-            batch_size=32,
+            epochs=epochs,
+            batch_size=batch_size,
             validation_data=(X_test, y_test),
             verbose=1,
         )
@@ -372,14 +405,27 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
             except Exception as e:
                 print(f"Error uploading CNN model to Hugging Face: {e}")
 
+        # Calculate accuracy for Optuna
+        _, accuracy = model.evaluate(X_test, y_test, verbose=0)
+        print(f"CNN Model Test Accuracy: {accuracy}")
+        return accuracy
+
     else:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42, stratify=y
         )
         if model_type == "rf":
-            model = RandomForestClassifier(
-                n_estimators=100, random_state=42, class_weight="balanced"
-            )
+            rf_params = {
+                'n_estimators': 100,
+                'random_state': 42,
+                'class_weight': 'balanced',
+                'max_depth': None, # Default for RandomForestClassifier
+                'min_samples_split': 2,
+                'min_samples_leaf': 1,
+            }
+            if params:
+                rf_params.update(params)
+            model = RandomForestClassifier(**rf_params)
             model.fit(X_train, y_train)
             joblib.dump(model, model_path)
             with open(model_path + ".feature_columns.json", "w") as f:
@@ -418,7 +464,20 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
                     print(f"Error uploading RF model to Hugging Face: {e}")
 
         elif model_type == "lgbm":
-            model = lgb.LGBMClassifier(random_state=42, class_weight="balanced")
+            lgbm_params = {
+                'objective': 'multiclass',
+                'num_class': len(np.unique(y_train)),
+                'metric': 'multi_logloss',
+                'boosting_type': 'gbdt',
+                'n_jobs': -1,
+                'seed': 42,
+                'verbose': -1,
+                'class_weight': 'balanced',
+            }
+            if params:
+                lgbm_params.update(params)
+
+            model = lgb.LGBMClassifier(**lgbm_params)
             model.fit(
                 X_train,
                 y_train,
@@ -462,4 +521,11 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
                 except Exception as e:
                     print(f"Error uploading LGBM model to Hugging Face: {e}")
 
+            # Calculate accuracy for Optuna
+            y_pred = model.predict(X_test)
+            accuracy = np.mean(y_pred == y_test)
+            print(f"LGBM Model Test Accuracy: {accuracy}")
+            return accuracy
+
     print(f"{model_type.upper()} Model saved to {model_path}")
+    return None
