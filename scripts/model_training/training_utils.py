@@ -20,10 +20,59 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.utils import to_categorical
 import lightgbm as lgb
+from tensorflow.keras import backend as K
+
+# Focal Loss as a Keras Loss class
+class FocalLoss(tf.keras.losses.Loss):
+    def __init__(self, gamma=2.0, alpha=None, name='focal_loss', reduction=tf.keras.losses.Reduction.SUM_OVER_BATCH_SIZE):
+        super().__init__(name=name, reduction=reduction)
+        self.gamma = gamma
+        self.alpha = alpha # alpha can be a scalar or a tensor of weights
+
+    def call(self, y_true, y_pred):
+        # Apply softmax to y_pred if it's logits
+        y_pred = tf.nn.softmax(y_pred)
+
+        epsilon = K.epsilon()
+        y_pred = K.clip(y_pred, epsilon, 1. - epsilon)
+
+        # Calculate cross entropy
+        cross_entropy = -y_true * K.log(y_pred)
+
+        # Calculate p_t (probability of the true class)
+        p_t = tf.reduce_sum(y_true * y_pred, axis=-1, keepdims=True)
+
+        # Calculate (1 - p_t)^gamma
+        focal_term = K.pow(1. - p_t, self.gamma)
+
+        # Apply alpha weighting
+        if self.alpha is not None:
+            alpha_factor = self.alpha * y_true
+            alpha_factor = tf.reduce_sum(alpha_factor, axis=-1, keepdims=True)
+        else:
+            alpha_factor = 1.0
+
+        # Combine focal term and cross entropy
+        loss = focal_term * cross_entropy * alpha_factor
+
+        # Sum over classes for each sample
+        loss = K.sum(loss, axis=-1)
+
+        return loss
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'gamma': self.gamma,
+            'alpha': self.alpha
+        })
+        return config
 
 from scripts.data_preprocessing.lgbm_categorical_processor import save_lgbm_categorical_features
 
+
 # GPUが利用可能か確認し、設定を行う
+
 physical_devices = tf.config.list_physical_devices("GPU")
 if physical_devices:
     try:
@@ -199,7 +248,7 @@ def preprocess_data(
         )
 
         X_flat = pd.concat([X_flat_num, X_flat_cat_dummies], axis=1)
-        y_cnn = to_categorical(df["target"], num_classes=len(df["target"].unique()))
+        y_cnn = to_categorical(df["target"], num_classes=3)
 
         # Calculate class weights
         from sklearn.utils.class_weight import compute_class_weight
@@ -215,7 +264,7 @@ def preprocess_data(
     else:
         raise ValueError("Invalid model_type specified.")
 
-def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_classes):
+def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_classes, class_weight_dict):
     seq_input = Input(shape=sequence_input_shape, name="sequence_input")
     x1 = Conv1D(filters=32, kernel_size=2, activation='relu')(seq_input)
     x1 = BatchNormalization()(x1)
@@ -233,11 +282,18 @@ def build_multi_input_cnn_model(sequence_input_shape, flat_input_shape, num_clas
     final_output = Dense(128, activation="relu")(concatenated)
     final_output = BatchNormalization()(final_output)
     final_output = Dropout(0.25)(final_output)
-    final_output = Dense(num_classes, activation="softmax")(final_output)
+    final_output = Dense(num_classes)(final_output) # No activation here
 
     model = Model(inputs=[seq_input, flat_input], outputs=final_output)
+    
+    # Convert class_weight_dict to a tensor for FocalLoss alpha
+    # Ensure the order of weights matches the class indices (0, 1, 2 for default; 0, 1 for top3)
+    # Fill with 1.0 if a class is missing in class_weight_dict (shouldn't happen if balanced)
+    alpha_list = [class_weight_dict.get(i, 1.0) for i in range(num_classes)]
+    alpha_tensor = tf.constant(alpha_list, dtype=tf.float32)
+
     model.compile(
-        optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"]
+        optimizer="adam", loss=FocalLoss(alpha=alpha_tensor), metrics=["accuracy"]
     )
     return model
 
@@ -269,7 +325,8 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
         X_test = [X_test_seq, X_test_flat]
 
         model = build_multi_input_cnn_model(
-            (X[0].shape[1], X[0].shape[2]), (X[1].shape[1],), y.shape[1]
+            (X[0].shape[1], X[0].shape[2]), (X[1].shape[1],), y.shape[1],
+            kwargs.get("class_weight_dict")
         )
         model.summary()
 
@@ -280,7 +337,6 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
             batch_size=32,
             validation_data=(X_test, y_test),
             verbose=1,
-            class_weight=kwargs.get("class_weight_dict")
         )
         model.save(model_path)
         with open(model_path + ".flat_features.json", "w") as f:

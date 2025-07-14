@@ -26,8 +26,12 @@ if __name__ == "__main__":
     parser.add_argument('--model_type', type=str, default='all',
                         choices=['rf', 'lgbm', 'cnn', 'all'],
                         help='Type of model to train (rf, lgbm, cnn, or all)')
+    parser.add_argument('--target_mode', type=str, default='all',
+                        choices=['default', 'top3', 'all'],
+                        help='Target mode to train (default, top3, or all)')
     args = parser.parse_args()
     model_to_train = args.model_type
+    target_mode_to_train = args.target_mode
 
     update_training_status(
         {"status": "running", "message": f"Starting training process for {model_to_train}..."}
@@ -37,7 +41,12 @@ if __name__ == "__main__":
         update_training_status({"status": "error", "message": "No data loaded."})
         sys.exit()
 
-    for target_mode in ["default", "top3"]:
+    if target_mode_to_train == 'all':
+        target_modes = ["default", "top3"]
+    else:
+        target_modes = [target_mode_to_train]
+
+    for target_mode in target_modes:
         if model_to_train in ['rf', 'all']:
             # With horse info
             X_rf, y_rf, target_maps_rf = preprocess_data(

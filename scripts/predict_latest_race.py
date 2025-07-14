@@ -223,41 +223,79 @@ def predict_race_from_url(race_url: str, target_mode="default"):
     print("Making predictions with individual models...")
     individual_predictions = predict_with_all_models(all_models, preprocessed_data_for_models, target_mode)
 
-    print("\n--- Individual Model Prediction Results ---")
-    for i, (_, row) in enumerate(df_final_for_prediction.iterrows()):
-        print(f"\n馬名: {row['horse_name']}")
-        for model_name, preds in individual_predictions.items():
-            if model_name.startswith("rf") or model_name.startswith("lgbm"):
-                # For RF and LGBM, preds are probabilities for each class
-                if target_mode == "default":
-                    # Default: 0=1st, 1=2-3rd, 2=Others
-                    # Determine predicted category based on probabilities
-                    predicted_category = "Others"
-                    if preds[i][0] > preds[i][1] and preds[i][0] > preds[i][2]:
-                        predicted_category = "1st"
-                    elif preds[i][1] > preds[i][0] and preds[i][1] > preds[i][2]:
-                        predicted_category = "2-3rd"
-                    print(f"  {model_name.upper()} - 1着確率: {preds[i][0]:.2%}, 2-3着確率: {preds[i][1]:.2%}, Others確率: {preds[i][2]:.2%}, 予測カテゴリ: {predicted_category}")
-                elif target_mode == "top3":
-                    # Top3: 0=1-3rd, 1=Others
-                    predicted_category = "Others"
-                    if preds[i][0] > preds[i][1]:
-                        predicted_category = "1-3rd"
-                    print(f"  {model_name.upper()} - 1-3着確率: {preds[i][0]:.2%}, Others確率: {preds[i][1]:.2%}, 予測カテゴリ: {predicted_category}")
-            elif model_name.startswith("cnn"):
-                # For CNN, preds are probabilities for each class
-                if target_mode == "default":
-                    predicted_category = "Others"
-                    if preds[i][0] > preds[i][1] and preds[i][0] > preds[i][2]:
-                        predicted_category = "1st"
-                    elif preds[i][1] > preds[i][0] and preds[i][1] > preds[i][2]:
-                        predicted_category = "2-3rd"
-                    print(f"  {model_name.upper()} - 1着確率: {preds[i][0]:.2%}, 2-3着確率: {preds[i][1]:.2%}, Others確率: {preds[i][2]:.2%}, 予測カテゴリ: {predicted_category}")
-                elif target_mode == "top3":
-                    predicted_category = "Others"
-                    if preds[i][0] > preds[i][1]:
-                        predicted_category = "1-3rd"
-                    print(f"  {model_name.upper()} - 1-3着確率: {preds[i][0]:.2%}, Others確率: {preds[i][1]:.2%}, 予測カテゴリ: {predicted_category}")
+    print("\n--- Individual Model Prediction Results (Ranked) ---")
+    horse_names = df_final_for_prediction['horse_name'].tolist()
+
+    for model_name, preds in individual_predictions.items():
+        print(f"\n--- Model: {model_name.upper()} ---")
+        
+        # Convert logits to probabilities for CNN models
+        if model_name.startswith("cnn"):
+            probs = tf.nn.softmax(preds).numpy()
+        else:
+            probs = preds
+
+        # Create a list of (horse_name, prob_1st, prob_2_3rd, prob_others) or (horse_name, prob_1_3rd, prob_others)
+        horse_probs = []
+        for i, horse_name in enumerate(horse_names):
+            if target_mode == "default":
+                horse_probs.append((horse_name, probs[i][0], probs[i][1], probs[i][2]))
+            elif target_mode == "top3":
+                horse_probs.append((horse_name, probs[i][0], probs[i][1]))
+
+        # Sort and assign ranks based on probabilities
+        ranked_horses = []
+        if target_mode == "default":
+            # Sort by 1st probability for 1st place
+            sorted_by_1st = sorted(horse_probs, key=lambda x: x[1], reverse=True)
+            
+            # Assign 1st place
+            first_place_horse = sorted_by_1st[0]
+            ranked_horses.append((first_place_horse[0], "1st"))
+            
+            # Remove 1st place horse from consideration for 2-3rd
+            remaining_horses = [h for h in sorted_by_1st if h[0] != first_place_horse[0]]
+            
+            # Sort remaining by 2-3rd probability for 2-3rd places
+            sorted_by_2_3rd = sorted(remaining_horses, key=lambda x: x[2], reverse=True) # x[2] is prob_2_3rd
+            
+            # Assign 2-3rd places (up to 2 horses)
+            count_2_3rd = 0
+            for horse in sorted_by_2_3rd:
+                if count_2_3rd < 2:
+                    ranked_horses.append((horse[0], "2-3rd"))
+                    count_2_3rd += 1
+                else:
+                    break
+            
+            # Assign Others to remaining horses
+            assigned_horses = [h[0] for h in ranked_horses]
+            for horse in horse_probs:
+                if horse[0] not in assigned_horses:
+                    ranked_horses.append((horse[0], "Others"))
+
+        elif target_mode == "top3":
+            # Sort by 1-3rd probability for 1-3rd places
+            sorted_by_1_3rd = sorted(horse_probs, key=lambda x: x[1], reverse=True) # x[1] is prob_1_3rd
+            
+            # Assign 1-3rd places (up to 3 horses)
+            count_1_3rd = 0
+            for horse in sorted_by_1_3rd:
+                if count_1_3rd < 3:
+                    ranked_horses.append((horse[0], "1-3rd"))
+                    count_1_3rd += 1
+                else:
+                    break
+            
+            # Assign Others to remaining horses
+            assigned_horses = [h[0] for h in ranked_horses]
+            for horse in horse_probs:
+                if horse[0] not in assigned_horses:
+                    ranked_horses.append((horse[0], "Others"))
+        
+        # Print the ranked results for the current model
+        for horse_name, predicted_category in ranked_horses:
+            print(f"  馬名: {horse_name}, 予測カテゴリ: {predicted_category}")
 
 
 if __name__ == "__main__":
