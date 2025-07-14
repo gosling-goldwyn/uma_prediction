@@ -4,3 +4,9 @@ numpy
 pandas
 pyarrow
 streamlit
+optuna
+tensorboard
+scikit-learn
+lightgbm
+tensorflow
+optuna-integration[tensorboard]
