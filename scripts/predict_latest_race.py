@@ -245,19 +245,20 @@ def predict_race_from_url(race_url: str, target_mode="default"):
                         predicted_category = "1-3rd"
                     print(f"  {model_name.upper()} - 1-3着確率: {preds[i][0]:.2%}, Others確率: {preds[i][1]:.2%}, 予測カテゴリ: {predicted_category}")
             elif model_name.startswith("cnn"):
-                # For CNN, preds are probabilities for each class
+                # For CNN, preds are logits, convert to probabilities
+                cnn_probs = tf.nn.softmax(preds[i]).numpy()
                 if target_mode == "default":
                     predicted_category = "Others"
-                    if preds[i][0] > preds[i][1] and preds[i][0] > preds[i][2]:
+                    if cnn_probs[0] > cnn_probs[1] and cnn_probs[0] > cnn_probs[2]:
                         predicted_category = "1st"
-                    elif preds[i][1] > preds[i][0] and preds[i][1] > preds[i][2]:
+                    elif cnn_probs[1] > cnn_probs[0] and cnn_probs[1] > cnn_probs[2]:
                         predicted_category = "2-3rd"
-                    print(f"  {model_name.upper()} - 1着確率: {preds[i][0]:.2%}, 2-3着確率: {preds[i][1]:.2%}, Others確率: {preds[i][2]:.2%}, 予測カテゴリ: {predicted_category}")
+                    print(f"  {model_name.upper()} - 1着確率: {cnn_probs[0]:.2%}, 2-3着確率: {cnn_probs[1]:.2%}, Others確率: {cnn_probs[2]:.2%}, 予測カテゴリ: {predicted_category}")
                 elif target_mode == "top3":
                     predicted_category = "Others"
-                    if preds[i][0] > preds[i][1]:
+                    if cnn_probs[0] > cnn_probs[1]:
                         predicted_category = "1-3rd"
-                    print(f"  {model_name.upper()} - 1-3着確率: {preds[i][0]:.2%}, Others確率: {preds[i][1]:.2%}, 予測カテゴリ: {predicted_category}")
+                    print(f"  {model_name.upper()} - 1-3着確率: {cnn_probs[0]:.2%}, Others確率: {cnn_probs[1]:.2%}, 予測カテゴリ: {predicted_category}")
 
 
 if __name__ == "__main__":

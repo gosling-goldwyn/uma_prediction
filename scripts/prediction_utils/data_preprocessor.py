@@ -25,19 +25,30 @@ def process_horse_weight(horse_weight_change_str):
 def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_features_columns=None, imputation_values=None, expected_columns=None, categorical_features_with_categories=None):
     df_processed = df.copy()
 
+    # Ensure imputation_values is a dictionary, even if None is passed
+    imputation_values = imputation_values if imputation_values is not None else {}
+
     # Common preprocessing steps (from train.py's preprocess_data)
-    # Fill missing values for all types
+    # Fill missing values for all types using imputation_values if provided
     for col in df_processed.columns:
         if pd.api.types.is_numeric_dtype(df_processed[col]):
-            if df_processed[col].isnull().all():
-                df_processed[col] = df_processed[col].fillna(0)
+            if col in imputation_values and imputation_values[col] is not None:
+                df_processed[col] = df_processed[col].fillna(imputation_values[col])
             else:
-                df_processed[col] = df_processed[col].fillna(df_processed[col].median())
+                # Fallback to median if imputation_values not provided for this column
+                if df_processed[col].isnull().all():
+                    df_processed[col] = df_processed[col].fillna(0)
+                else:
+                    df_processed[col] = df_processed[col].fillna(df_processed[col].median())
         else:
-            if df_processed[col].isnull().all():
-                df_processed[col] = df_processed[col].fillna("missing")
+            if col in imputation_values and imputation_values[col] is not None:
+                df_processed[col] = df_processed[col].fillna(imputation_values[col])
             else:
-                df_processed[col] = df_processed[col].fillna(df_processed[col].mode()[0])
+                # Fallback to mode if imputation_values not provided for this column
+                if df_processed[col].isnull().all():
+                    df_processed[col] = df_processed[col].fillna("missing")
+                else:
+                    df_processed[col] = df_processed[col].fillna(df_processed[col].mode()[0])
 
     if model_type == "rf":
         high_cardinality_features = ["horse_name", "jockey"]
@@ -86,7 +97,8 @@ def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_featur
         ]
         X_seq_df = df_processed[sequence_features].copy()
         for col in sequence_features:
-            fill_value = imputation_values.get(col, 0) if imputation_values else 0
+            # Use imputation_values for sequence features
+            fill_value = imputation_values.get(col, 0) if imputation_values and col in imputation_values else 0
             X_seq_df[col] = pd.to_numeric(X_seq_df[col], errors="coerce").fillna(fill_value)
         X_seq = X_seq_df.values.reshape(len(df_processed), 5, len(sequence_features) // 5)
 
@@ -97,12 +109,14 @@ def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_featur
 
         X_flat_num = df_processed[flat_numerical_features].copy()
         for col in X_flat_num.columns:
-            fill_value = imputation_values.get(col, 0) if imputation_values else 0
+            # Use imputation_values for flat numerical features
+            fill_value = imputation_values.get(col, 0) if imputation_values and col in imputation_values else 0
             X_flat_num[col] = pd.to_numeric(X_flat_num[col], errors="coerce").fillna(fill_value)
 
         X_flat_cat = df_processed[flat_categorical_features].copy()
         for col in X_flat_cat.columns:
-            fill_value = imputation_values.get(col, "missing") if imputation_values else "missing"
+            # Use imputation_values for flat categorical features
+            fill_value = imputation_values.get(col, "missing") if imputation_values and col in imputation_values else "missing"
             X_flat_cat[col] = X_flat_cat[col].astype(str).fillna(fill_value)
         X_flat_cat_dummies = pd.get_dummies(X_flat_cat, columns=flat_categorical_features)
 

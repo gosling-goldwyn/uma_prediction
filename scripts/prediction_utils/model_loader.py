@@ -5,6 +5,7 @@ import tensorflow as tf
 
 from scripts.model_training.train import get_model_path
 from scripts.data_preprocessing.lgbm_categorical_processor import load_lgbm_categorical_features
+from scripts.model_training.training_utils import FocalLoss # FocalLossをインポート
 
 def load_all_models():
     models = {}
@@ -70,10 +71,12 @@ def load_all_models():
                 print(f"LGBM model not found: {lgbm_model_path}")
 
         # Load CNN model (always with horse info)
+        print(f"DEBUG: Attempting to load CNN model for target_mode: {target_mode}")
         cnn_model_path = get_model_path("cnn", target_mode, "included")
+        print(f"DEBUG: CNN model path: {cnn_model_path}")
         if os.path.exists(cnn_model_path):
             try:
-                cnn_model = tf.keras.models.load_model(cnn_model_path)
+                cnn_model = tf.keras.models.load_model(cnn_model_path, custom_objects={'FocalLoss': FocalLoss})
                 cnn_flat_features_path = cnn_model_path + ".flat_features.json"
                 cnn_imputation_values_path = cnn_model_path + ".imputation_values.json"
                 

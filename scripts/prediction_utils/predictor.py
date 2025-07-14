@@ -30,6 +30,7 @@ def predict_with_all_models(models, preprocessed_data, target_mode):
         cnn_model = models[target_mode][model_key]["model"]
         # CNN models predict probabilities for each class
         predictions[model_key] = cnn_model.predict(preprocessed_data[model_key])
+        print(f"DEBUG: Raw CNN predictions for {model_key}: {predictions[model_key]}")
     else:
         print(f"Warning: CNN model {model_key} not available for {target_mode}.")
 
