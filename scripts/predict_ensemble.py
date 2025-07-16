@@ -180,6 +180,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
                 "horse_weight": horse_weight,
                 "weight_change": weight_change,
                 "jockey": detail_row.get("jockey", ""),
+                "odds": detail_row.get("odds", 0.0), # オッズ情報を追加
             },
         }
         full_race_info.update(extracted_index_data)
