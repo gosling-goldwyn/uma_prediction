@@ -338,7 +338,7 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
         not isinstance(X, list) and X.empty
     ):
         print(f"No data to train the {model_type} model. Exiting training.")
-        return
+        return 0.0
 
     model_path = get_model_path(model_type, target_mode, horse_info)
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
@@ -424,7 +424,9 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
                 'min_samples_leaf': 1,
             }
             if params:
-                rf_params.update(params)
+                # Remove target_mode from params if it exists, as RandomForestClassifier does not accept it
+                filtered_params = {k: v for k, v in params.items() if k != 'target_mode'}
+                rf_params.update(filtered_params)
             model = RandomForestClassifier(**rf_params)
             model.fit(X_train, y_train)
             joblib.dump(model, model_path)
@@ -462,6 +464,12 @@ def train_model(model_type, X, y, target_mode, horse_info="included", hf_api=Non
                     print(f"Uploaded RF model and metadata to Hugging Face: {hf_model_repo_id}")
                 except Exception as e:
                     print(f"Error uploading RF model to Hugging Face: {e}")
+
+            # Calculate accuracy for Optuna
+            y_pred = model.predict(X_test)
+            accuracy = np.mean(y_pred == y_test)
+            print(f"RF Model Test Accuracy: {accuracy}")
+            return accuracy
 
         elif model_type == "lgbm":
             lgbm_params = {

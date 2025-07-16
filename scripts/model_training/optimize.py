@@ -3,6 +3,7 @@ from optuna.integration import TensorBoardCallback
 import pandas as pd
 import os
 import numpy as np
+import json # Added for json.dump
 
 from scripts.model_training.training_utils import preprocess_data, train_model
 
@@ -15,12 +16,18 @@ def load_data():
         print(f"Error loading {DATA_FILE}: {e}")
         return pd.DataFrame()
 
-def objective(trial):
+def objective(trial, model_type_filter=None):
     df = load_data()
     if df.empty:
         raise ValueError("No data loaded for Optuna objective.")
 
-    model_type = trial.suggest_categorical("model_type", ["rf", "lgbm", "cnn"])
+    # If model_type_filter is provided, use it directly
+    if model_type_filter:
+        model_type = model_type_filter
+    else:
+        # Otherwise, let Optuna suggest the model type
+        model_type = trial.suggest_categorical("model_type", ["rf", "lgbm", "cnn"])
+    
     target_mode = "default" # For simplicity, optimize only default target mode for now
 
     accuracy = 0.0
@@ -68,59 +75,69 @@ def objective(trial):
         X_cnn, y_cnn, flat_cols, imputation_values, class_weight_dict = preprocess_data(
             df.copy(), model_type="cnn", target_mode=target_mode
         )
-        # CNNモデルのtrain_modelは直接accuracyを返さないため、別途評価
-        # train_model内でvalidation_dataのaccuracyを返すように修正が必要
-        # 現状はNoneが返るため、ここでは0.0を返す
-        # TODO: train_model for CNN should return accuracy
-        accuracy = 0.0 # Placeholder for now
+        accuracy = train_model(
+            "cnn", X_cnn, y_cnn, target_mode, 
+            flat_features_columns=flat_cols, 
+            imputation_values=imputation_values, 
+            class_weight_dict=class_weight_dict, 
+            params=cnn_params
+        )
 
     return accuracy
 
 if __name__ == "__main__":
-    # Create a directory for TensorBoard logs
-    log_dir = "logs/optuna"
-    os.makedirs(log_dir, exist_ok=True)
+    model_types_to_optimize = ["rf", "lgbm", "cnn"]
+    n_trials_per_model = 10 # 各モデルタイプごとの試行回数
 
-    # Create a TensorBoard callback
-    tb_callback = TensorBoardCallback(log_dir, metric_name="accuracy")
+    for model_type_to_run in model_types_to_optimize:
+        print(f"\n--- Optimizing {model_type_to_run.upper()} model ---")
+        
+        # Create a directory for TensorBoard logs
+        log_dir = f"logs/optuna/{model_type_to_run}"
+        os.makedirs(log_dir, exist_ok=True)
 
-    study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=10, callbacks=[tb_callback])
+        # Create a TensorBoard callback
+        tb_callback = TensorBoardCallback(log_dir, metric_name="accuracy")
 
-    print("Number of finished trials: ", len(study.trials))
-    print("Best trial:")
-    trial = study.best_trial
+        # Create a study for each model type
+        study_name = f"uma_prediction_optimization_{model_type_to_run}"
+        study = optuna.create_study(
+            direction="maximize", 
+            storage="sqlite:///logs/optuna/optuna_study.db", 
+            study_name=study_name
+        )
+        
+        # Optimize the objective for the specific model type
+        study.optimize(
+            lambda trial: objective(trial, model_type_filter=model_type_to_run), 
+            n_trials=n_trials_per_model, 
+            callbacks=[tb_callback]
+        )
 
-    print("  Value: ", trial.value)
-    print("  Params: ")
-    for key, value in trial.params.items():
-        print("    {}: {}".format(key, value))
+        print(f"Number of finished trials for {model_type_to_run}: ", len(study.trials))
+        print(f"Best trial for {model_type_to_run}:")
+        trial = study.best_trial
 
-    # Save best parameters for each model type
-    best_params_dir = "params"
-    os.makedirs(best_params_dir, exist_ok=True)
+        print("  Value: ", trial.value)
+        print("  Params: ")
+        for key, value in trial.params.items():
+            print("    {}: {}".format(key, value))
 
-    # Group trials by model_type
-    trials_by_model_type = {}
-    for t in study.trials:
-        if "model_type" in t.params:
-            model_type = t.params["model_type"]
-            if model_type not in trials_by_model_type or t.value > trials_by_model_type[model_type]["value"]:
-                trials_by_model_type[model_type] = {"value": t.value, "params": t.params}
+        # Save best parameters for the current model type
+        best_params_dir = "params"
+        os.makedirs(best_params_dir, exist_ok=True)
 
-    for model_type, data in trials_by_model_type.items():
-        params_to_save = {k: v for k, v in data["params"].items() if not k.startswith(f"{model_type}_")}
+        params_to_save = {k: v for k, v in trial.params.items() if not k.startswith(f"{model_type_to_run}_")}
         # Extract model-specific params
         model_specific_params = {}
-        for k, v in data["params"].items():
-            if k.startswith(f"{model_type}_"):
-                model_specific_params[k.replace(f"{model_type}_", "")] = v
+        for k, v in trial.params.items():
+            if k.startswith(f"{model_type_to_run}_"):
+                model_specific_params[k.replace(f"{model_type_to_run}_", "")] = v
         
-        # Combine model-specific params with other relevant params (e.g., target_mode)
-        final_params = {"target_mode": data["params"].get("target_mode", "default")} # Assuming default for now
-        final_params.update(model_specific_params)
+        # Combine model-specific params
+        final_params = model_specific_params
 
-        param_file_path = os.path.join(best_params_dir, f"best_params_{model_type}.json")
+        param_file_path = os.path.join(best_params_dir, f"best_params_{model_type_to_run}.json")
         with open(param_file_path, "w") as f:
             json.dump(final_params, f, indent=4)
-        print(f"Saved best parameters for {model_type} to {param_file_path}")
+        print(f"Saved best parameters for {model_type_to_run} to {param_file_path}")
