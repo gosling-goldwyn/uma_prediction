@@ -24,7 +24,7 @@ from scripts.prediction_utils.constants import (
     PREV_RACE_HEAD,
     FINAL_COLS,
 )
-from scripts.data_acquisition.debug_scraper import fetch_page, parse_race_details
+from scripts.prediction_utils.scraper import fetch_race_data_with_playwright
 from scripts.prediction_utils.data_preprocessor import (
     preprocess_data_for_prediction,
     get_race_turn,
@@ -46,8 +46,9 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         print(f"No models loaded for target mode: {target_mode}. Exiting.")
         return
 
-    soup_overview = fetch_page(race_url)
-    if not soup_overview:
+    df_detail, soup_overview = fetch_race_data_with_playwright(race_url)
+    if df_detail.empty or not soup_overview:
+        print("Failed to fetch or parse race data with Playwright. Exiting.")
         return
 
     try:
@@ -96,10 +97,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         "place": place_name,
     }
 
-    df_detail = parse_race_details(soup_overview)
-    if df_detail.empty:
-        print("Error: df_detail is empty after parsing race details.")
-        return
+    
 
     base_race_info["sum_num"] = len(df_detail)
     all_race_data = []
