@@ -41,13 +41,14 @@ def fetch_race_data_with_playwright(race_url: str):
                         odds_cell = cells[9] # 10番目のセルがオッズ
                         odds = float(odds_cell.find('span').text)
                         
-                        horse_num = int(cells[1].text.strip())
+                        horse_num_text = cells[1].text.strip()
+                        horse_num = int(horse_num_text) if horse_num_text else -1
                         horse_data.append({
                             'horse_num': horse_num,
                             'horse_name': cells[3].find('a').text.strip(),
                             'sex_age': cells[4].text.strip(),
                             'weight_carry': cells[5].text.strip(),
-                            'jockey': cells[6].find('a').text.strip(),
+                            'jockey': cells[6].find('a').text.strip() if cells[6].find('a') else cells[6].text.strip().replace('○○', 'missing'),
                             'horse_weight_change': cells[8].text.strip(), # 9番目のセルが馬体重
                             'odds': odds
                         })
@@ -91,12 +92,14 @@ def parse_basic_shutuba_table(soup: BeautifulSoup):
                 continue
             
             try:
+                horse_num_text = cells[1].text.strip()
+                horse_num = int(horse_num_text) if horse_num_text else -1
                 horse_data.append({
-                    'horse_num': int(cells[1].text.strip()),
+                    'horse_num': horse_num,
                     'horse_name': cells[3].find('a').text.strip(),
                     'sex_age': cells[4].text.strip(),
                     'weight_carry': cells[5].text.strip(),
-                    'jockey': cells[6].find('a').text.strip(),
+                    'jockey': cells[6].find('a').text.strip() if cells[6].find('a') else cells[6].text.strip(),
                     'horse_weight_change': cells[8].text.strip(), # 9番目のセル
                     'odds': 0.0  # オッズは0で埋める
                 })

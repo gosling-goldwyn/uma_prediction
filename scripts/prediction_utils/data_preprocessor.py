@@ -94,23 +94,45 @@ def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_featur
         return df_processed
 
     elif model_type == "lgbm":
+        # Ensure all expected categorical features are present, even if all values are missing
         if categorical_features_with_categories:
-            for col, known_categories in categorical_features_with_categories.items():
-                if col in df_processed.columns:
-                    # Fill any existing NaNs with 'missing'
+            for col in categorical_features_with_categories.keys():
+                if col not in df_processed.columns:
+                    df_processed[col] = 'missing' # Add missing column with default value
+
+        # Identify all object columns in the current DataFrame
+        current_object_cols = [col for col in df_processed.columns if df_processed[col].dtype == "object"]
+
+        for col in current_object_cols:
+            # Convert empty strings to NaN first to be handled by fillna
+            df_processed[col] = df_processed[col].replace('', np.nan)
+            # Fill any existing NaNs with 'missing'
+            df_processed[col] = df_processed[col].fillna('missing')
+
+            if categorical_features_with_categories and col in categorical_features_with_categories:
+                known_categories = categorical_features_with_categories[col]
+                
+                # Set the column to the CategoricalDtype with categories from training.
+                # This ensures that the categories match exactly what LGBM expects.
+                # Any value in the data that is not in `known_categories` will be converted to NaN.
+                df_processed[col] = pd.Categorical(df_processed[col], categories=known_categories)
+                
+                # After setting the categories, there might be NaNs for values that were not in the training categories.
+                # We fill these NaNs with our designated 'missing' category value.
+                if df_processed[col].isnull().any():
+                    # The 'missing' category might not be present if all values were known.
+                    # We ensure it exists before trying to fill with it.
+                    if 'missing' not in df_processed[col].cat.categories:
+                         df_processed[col] = df_processed[col].cat.add_categories('missing')
                     df_processed[col] = df_processed[col].fillna('missing')
-                    
-                    # Identify values that are not in the known training categories
-                    # and replace them with 'missing'. This handles new/unseen categories.
-                    is_known = df_processed[col].isin(known_categories)
-                    df_processed.loc[~is_known, col] = 'missing'
-                    
-                    # Convert the column to the CategoricalDtype with categories from training
-                    df_processed[col] = pd.Categorical(df_processed[col], categories=known_categories)
+            else:
+                # Fallback for columns not in the saved categories list
+                df_processed[col] = df_processed[col].astype('category')
 
         # Reindex to ensure column order and presence matches training data
         if expected_columns is not None:
             df_processed = df_processed.reindex(columns=expected_columns, fill_value=0)
+
         return df_processed
 
     elif model_type == "cnn":
