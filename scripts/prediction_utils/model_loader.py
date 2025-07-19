@@ -21,7 +21,10 @@ def load_all_models():
             rf_model_path = get_model_path("rf", target_mode, horse_info)
             if os.path.exists(rf_model_path):
                 try:
-                    rf_model = joblib.load(rf_model_path)
+                    loaded_obj = joblib.load(rf_model_path)
+                    rf_model = loaded_obj["model"]
+                    rf_calibrators = loaded_obj["calibrators"]
+
                     rf_target_maps_path = rf_model_path + ".target_maps.json"
                     rf_target_maps = None
                     if os.path.exists(rf_target_maps_path):
@@ -34,6 +37,7 @@ def load_all_models():
                             rf_feature_columns = json.load(f)
                     models[target_mode][f"rf_{horse_info}"] = {
                         "model": rf_model,
+                        "calibrators": rf_calibrators,
                         "target_maps": rf_target_maps,
                         "expected_columns": rf_feature_columns,
                         "model_path": rf_model_path # Add model_path

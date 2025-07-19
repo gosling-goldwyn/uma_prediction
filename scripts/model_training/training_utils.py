@@ -22,6 +22,7 @@ from tensorflow.keras.utils import to_categorical
 import lightgbm as lgb
 from tensorflow.keras import backend as K
 from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.isotonic import IsotonicRegression
 
 
 # Focal Loss as a Keras Loss class
@@ -534,7 +535,18 @@ def train_model(
                 rf_params.update(filtered_params)
             model = RandomForestClassifier(**rf_params)
             model.fit(X_train, y_train)
-            joblib.dump(model, model_path)
+
+            # Calibrate probabilities
+            y_pred_proba = model.predict_proba(X_test)
+            calibrators = []
+            for i in range(y_pred_proba.shape[1]):
+                iso_reg = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip")
+                y_test_class = (y_test == i).astype(int)
+                iso_reg.fit(y_pred_proba[:, i], y_test_class)
+                calibrators.append(iso_reg)
+
+            # Save model and calibrators
+            joblib.dump({"model": model, "calibrators": calibrators}, model_path)
             with open(model_path + ".feature_columns.json", "w") as f:
                 json.dump(X_train.columns.tolist(), f)
             if "target_maps" in kwargs:

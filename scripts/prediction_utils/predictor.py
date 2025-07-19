@@ -1,40 +1,36 @@
 import lightgbm as lgb
 import tensorflow as tf
 
-def predict_with_all_models(models, preprocessed_data, target_mode):
+import numpy as np
+
+def predict_with_all_models(all_models, preprocessed_data, target_mode):
     predictions = {}
-    
-    # RF models
-    for horse_info in ["included", "excluded"]:
-        model_key = f"rf_{horse_info}"
-        if model_key in models[target_mode]:
-            rf_model = models[target_mode][model_key]["model"]
-            # RF models predict probabilities for each class
-            model_path = models[target_mode][model_key]["model_path"]
-            predictions[model_path] = rf_model.predict_proba(preprocessed_data[model_key])
-        else:
-            print(f"Warning: RF model {model_key} not available for {target_mode}.")
+    for model_key, data in preprocessed_data.items():
+        model_info = all_models[target_mode].get(model_key)
+        if model_info:
+            model = model_info["model"]
+            model_path = model_info["model_path"]
+            
+            # Get raw probabilities
+            if "cnn" in model_key:
+                raw_predictions = model.predict(data)
+            else:
+                raw_predictions = model.predict_proba(data)
 
-    # LGBM models
-    for horse_info in ["included", "excluded"]:
-        model_key = f"lgbm_{horse_info}"
-        if model_key in models[target_mode]:
-            lgbm_model = models[target_mode][model_key]["model"]
-            # LGBM models predict probabilities for each class
-            model_path = models[target_mode][model_key]["model_path"]
-            predictions[model_path] = lgbm_model.predict_proba(preprocessed_data[model_key])
-        else:
-            print(f"Warning: LGBM model {model_key} not available for {target_mode}.")
-
-    # CNN model
-    model_key = "cnn_included"
-    if model_key in models[target_mode]:
-        cnn_model = models[target_mode][model_key]["model"]
-        # CNN models predict probabilities for each class
-        model_path = models[target_mode][model_key]["model_path"]
-        predictions[model_path] = cnn_model.predict(preprocessed_data[model_key])
-        print(f"DEBUG: Raw CNN predictions for {model_key}: {predictions[model_path]}")
-    else:
-        print(f"Warning: CNN model {model_key} not available for {target_mode}.")
+            # Calibrate probabilities if calibrators exist
+            if "calibrators" in model_info and model_info["calibrators"]:
+                calibrated_predictions = np.zeros_like(raw_predictions)
+                calibrators = model_info["calibrators"]
+                for i in range(raw_predictions.shape[1]):
+                    calibrated_predictions[:, i] = calibrators[i].predict(raw_predictions[:, i])
+                
+                # Normalize to sum to 1
+                sum_of_probs = np.sum(calibrated_predictions, axis=1, keepdims=True)
+                # Avoid division by zero
+                sum_of_probs[sum_of_probs == 0] = 1
+                normalized_predictions = calibrated_predictions / sum_of_probs
+                predictions[model_path] = normalized_predictions
+            else:
+                predictions[model_path] = raw_predictions
 
     return predictions
