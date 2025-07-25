@@ -54,4 +54,33 @@ for file_path in files_to_upload:
     except Exception as e:
         print(f"Error uploading {file_path}: {e}")
 
-print("Model upload process completed.")
+# Add section for parameter files
+params_dir = "./params"
+if os.path.exists(params_dir):
+    params_to_upload = []
+    for root, _, files in os.walk(params_dir):
+        for file in files:
+            if file.endswith(".json"): # Only upload JSON parameter files
+                params_to_upload.append(os.path.join(root, file))
+
+    print(f"Found {len(params_to_upload)} parameter files to upload from '{params_dir}'.")
+
+    for file_path in params_to_upload:
+        try:
+            # The path in the repository will be params/relative_path_from_params_dir
+            repo_file_path = os.path.join("params", os.path.relpath(file_path, params_dir))
+            api.upload_file(
+                path_or_fileobj=file_path,
+                path_in_repo=repo_file_path,
+                repo_id=repo_id,
+                repo_type="model",
+                token=hf_token,
+            )
+            print(f"Uploaded {file_path} to {repo_id}/{repo_file_path}")
+        except Exception as e:
+            print(f"Error uploading {file_path}: {e}")
+else:
+    print(f"Parameter directory '{params_dir}' not found. Skipping parameter upload.")
+
+
+print("Model and parameter upload process completed.")

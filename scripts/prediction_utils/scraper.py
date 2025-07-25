@@ -3,12 +3,15 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import time
 
-def fetch_race_data_with_playwright(race_url: str):
+def fetch_race_data_with_playwright(race_url: str, proxy_server: str = None):
     """
     Playwrightを使用してレースページのHTMLを取得し、出馬表とオッズ情報を解析します。
     """
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        launch_options = {}
+        if proxy_server:
+            launch_options['proxy'] = {'server': proxy_server}
+        browser = p.chromium.launch(**launch_options)
         page = browser.new_page()
         try:
             # ページに移動し、DOMの準備が完了するまで待つ

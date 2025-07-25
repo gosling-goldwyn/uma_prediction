@@ -3,7 +3,8 @@ from optuna.integration import TensorBoardCallback
 import pandas as pd
 import os
 import numpy as np
-import json # Added for json.dump
+import json
+import argparse # Added for argparse
 
 from scripts.model_training.training_utils import preprocess_data, train_model
 
@@ -86,31 +87,41 @@ def objective(trial, model_type_filter=None):
     return accuracy
 
 if __name__ == "__main__":
-    model_types_to_optimize = ["rf", "lgbm", "cnn"]
-    n_trials_per_model = 10 # 各モデルタイプごとの試行回数
+    parser = argparse.ArgumentParser(description="Optimize hyperparameters for specified model types.")
+    parser.add_argument(
+        "--model-types",
+        nargs=":",
+        choices=["rf", "lgbm", "cnn"],
+        default=["rf", "lgbm", "cnn"],
+        help="Specify one or more model types to optimize (e.g., --model-types rf cnn)"
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=10,
+        help="Number of optimization trials per model type."
+    )
+    args = parser.parse_args()
 
-    for model_type_to_run in model_types_to_optimize:
+    for model_type_to_run in args.model_types:
         print(f"\n--- Optimizing {model_type_to_run.upper()} model ---")
         
-        # Create a directory for TensorBoard logs
         log_dir = f"logs/optuna/{model_type_to_run}"
         os.makedirs(log_dir, exist_ok=True)
 
-        # Create a TensorBoard callback
         tb_callback = TensorBoardCallback(log_dir, metric_name="accuracy")
 
-        # Create a study for each model type
         study_name = f"uma_prediction_optimization_{model_type_to_run}"
         study = optuna.create_study(
             direction="maximize", 
             storage="sqlite:///logs/optuna/optuna_study.db", 
-            study_name=study_name
+            study_name=study_name,
+            load_if_exists=True # Load existing study if it exists
         )
         
-        # Optimize the objective for the specific model type
         study.optimize(
             lambda trial: objective(trial, model_type_filter=model_type_to_run), 
-            n_trials=n_trials_per_model, 
+            n_trials=args.n_trials, 
             callbacks=[tb_callback]
         )
 
@@ -123,18 +134,14 @@ if __name__ == "__main__":
         for key, value in trial.params.items():
             print("    {}: {}".format(key, value))
 
-        # Save best parameters for the current model type
         best_params_dir = "params"
         os.makedirs(best_params_dir, exist_ok=True)
 
-        params_to_save = {k: v for k, v in trial.params.items() if not k.startswith(f"{model_type_to_run}_")}
-        # Extract model-specific params
         model_specific_params = {}
         for k, v in trial.params.items():
             if k.startswith(f"{model_type_to_run}_"):
                 model_specific_params[k.replace(f"{model_type_to_run}_", "")] = v
         
-        # Combine model-specific params
         final_params = model_specific_params
 
         param_file_path = os.path.join(best_params_dir, f"best_params_{model_type_to_run}.json")
