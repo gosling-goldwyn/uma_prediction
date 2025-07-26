@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Optimize hyperparameters for specified model types.")
     parser.add_argument(
         "--model-types",
-        nargs=":",
+        nargs="+",
         choices=["rf", "lgbm", "cnn"],
         default=["rf", "lgbm", "cnn"],
         help="Specify one or more model types to optimize (e.g., --model-types rf cnn)"
