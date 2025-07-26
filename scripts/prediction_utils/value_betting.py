@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-def identify_value_bets(df_race_data: pd.DataFrame, model_predictions: np.ndarray, target_mode: str, value_threshold: float = 1.2) -> pd.DataFrame:
+def identify_value_bets(df_race_data: pd.DataFrame, model_predictions: np.ndarray, target_mode: str, value_threshold: float = 2.4) -> pd.DataFrame:
     """
     Identifies 'value bets' by comparing model's predicted probabilities with implied probabilities from market odds.
 

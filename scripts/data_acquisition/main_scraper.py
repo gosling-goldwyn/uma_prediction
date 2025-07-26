@@ -133,6 +133,13 @@ def main():
         update_status(status="error", error=f"Error: {OVERVIEW_PICKLE_PATH} not found.")
         return
 
+    # 既存のデータセットをロード
+    if os.path.exists(OUTPUT_PARQUET_PATH):
+        print(f"Loading existing dataset from {OUTPUT_PARQUET_PATH}...")
+        df_existing = pd.read_parquet(OUTPUT_PARQUET_PATH)
+    else:
+        df_existing = pd.DataFrame()
+
     all_race_data = []
     total_races = len(df_overview)
     processed_races_count = 0
@@ -247,11 +254,24 @@ def main():
         if not all_race_data:
             print("No new data scraped.")
             update_status(status="completed", current_step="No new data scraped.")
+            # 既存のデータがある場合はそれを再度保存する（あるいは何もしない）
+            if not df_existing.empty:
+                df_existing.to_parquet(OUTPUT_PARQUET_PATH)
+                print(f"Existing data preserved in {OUTPUT_PARQUET_PATH}")
             return
 
-        df_all = pd.DataFrame(all_race_data, columns=list(full_race_info.keys()))
-        df_all.to_parquet(OUTPUT_PARQUET_PATH)
-        print(f"All data saved to {OUTPUT_PARQUET_PATH}")
+        # 新しいデータをDataFrameに変換
+        df_new = pd.DataFrame(all_race_data, columns=list(full_race_info.keys()))
+
+        # 既存のデータと新しいデータを結合
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+
+        # 重複を除去（念のため、レースURLや馬名などで一意になるキーで判断）
+        # ここでは、日付、レース番号、馬名で重複を除去する例
+        df_combined.drop_duplicates(subset=['date', 'race_num', 'horse_name'], keep='last', inplace=True)
+
+        df_combined.to_parquet(OUTPUT_PARQUET_PATH)
+        print(f"All data ({len(df_combined)} records) saved to {OUTPUT_PARQUET_PATH}")
         update_status(
             status="completed",
             current_step="Race detail data scraped and saved.",

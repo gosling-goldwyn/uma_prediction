@@ -28,4 +28,15 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
+    "poethepoet>=0.36.0",
 ]
+
+[tool.poe.tasks]
+scrape_race_outline = "python -m scripts.data_acquisition.scraping_outline"
+scrape_race_detail = "python -m scripts.data_acquisition.main_scraper"
+scrape_speed_index = "python -m scripts.data_acquisition.scraping_speed_index"
+optimize = "python -m scripts.model_training.optimize"
+train_lgbm_optimized = "python -m scripts.model_training.train --model_type lgbm --params_file params/best_params_lgbm.json"
+train_rf_optimized = "python -m scripts.model_training.train --model_type rf --params_file params/best_params_rf.json"
+train_cnn_optimized = "python -m scripts.model_training.train --model_type cnn --params_file params/best_params_cnn.json"
+predict = "python -m scripts.predict_ensemble https://race.netkeiba.com/race/shutuba.html?race_id=202510020811"

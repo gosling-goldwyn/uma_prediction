@@ -21,7 +21,10 @@ def load_all_models():
             rf_model_path = get_model_path("rf", target_mode, horse_info)
             if os.path.exists(rf_model_path):
                 try:
-                    rf_model = joblib.load(rf_model_path)
+                    loaded_obj = joblib.load(rf_model_path)
+                    rf_model = loaded_obj["model"]
+                    rf_calibrators = loaded_obj["calibrators"]
+
                     rf_target_maps_path = rf_model_path + ".target_maps.json"
                     rf_target_maps = None
                     if os.path.exists(rf_target_maps_path):
@@ -34,8 +37,10 @@ def load_all_models():
                             rf_feature_columns = json.load(f)
                     models[target_mode][f"rf_{horse_info}"] = {
                         "model": rf_model,
+                        "calibrators": rf_calibrators,
                         "target_maps": rf_target_maps,
-                        "expected_columns": rf_feature_columns
+                        "expected_columns": rf_feature_columns,
+                        "model_path": rf_model_path # Add model_path
                     }
                     print(f"Loaded RF model: {rf_model_path}")
                 except Exception as e:
@@ -62,7 +67,8 @@ def load_all_models():
                     models[target_mode][f"lgbm_{horse_info}"] = {
                         "model": lgbm_model,
                         "expected_columns": lgbm_feature_columns,
-                        "categorical_features_with_categories": lgbm_categorical_features_with_categories # 追加
+                        "categorical_features_with_categories": lgbm_categorical_features_with_categories, # 追加
+                        "model_path": lgbm_model_path # Add model_path
                     }
                     print(f"Loaded LGBM model: {lgbm_model_path}")
                 except Exception as e:
@@ -93,7 +99,8 @@ def load_all_models():
                 models[target_mode]["cnn_included"] = {
                     "model": cnn_model,
                     "flat_features": cnn_flat_features,
-                    "imputation_values": cnn_imputation_values
+                    "imputation_values": cnn_imputation_values,
+                    "model_path": cnn_model_path # Add model_path
                 }
                 print(f"Loaded CNN model: {cnn_model_path}")
             except Exception as e:

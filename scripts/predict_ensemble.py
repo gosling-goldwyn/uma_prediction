@@ -70,9 +70,9 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         field_dist_match = re.search(r"(芝|ダ|障)\s*(\d+)m", race_data01_text)
         field_type, distance = field_dist_match.groups()
         weather_match = re.search(r"天候:(\S)", race_data01_text)
-        weather = weather_match.group(1) if weather_match else ""
+        weather = weather_match.group(1) if weather_match else "missing"
         field_cond_match = re.search(r"馬場:(\S)", race_data01_text)
-        field_cond = field_cond_match.group(1) if field_cond_match else ""
+        field_cond = field_cond_match.group(1) if field_cond_match else "missing"
 
         kai = int(re.search(r"\d+", race_data02_spans[0]).group(0))
         place_name = race_data02_spans[1]
@@ -252,6 +252,29 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         )
 
     print("Making predictions with individual models...")
+
+    # --- DEBUGGING STEP ---
+    print("\n--- DEBUGGING CATEGORICAL FEATURES ---")
+    for model_key, data in preprocessed_data_for_models.items():
+        if 'lgbm' in model_key:
+            print(f"\n[DEBUG] Inspecting data for: {model_key}")
+            if isinstance(data, pd.DataFrame):
+                cat_cols = [col for col in data.columns if data[col].dtype.name == 'category']
+                if not cat_cols:
+                    print("No categorical columns found in preprocessed data.")
+                for col in cat_cols:
+                    print(f"  - Column: {col}")
+                    print(f"    - Dtype: {data[col].dtype}")
+                    # Limit printing categories if there are too many
+                    if len(data[col].cat.categories) > 50:
+                         print(f"    - Categories ({len(data[col].cat.categories)} total): {data[col].cat.categories[:25].tolist()}... (truncated)")
+                    else:
+                         print(f"    - Categories: {data[col].cat.categories.tolist()}")
+            else:
+                print("Preprocessed data is not a DataFrame.")
+    print("--- END DEBUGGING ---\n")
+    # --- END DEBUGGING STEP ---
+
     individual_predictions = predict_with_all_models(
         all_models, preprocessed_data_for_models, target_mode
     )
@@ -273,7 +296,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         and not df_final_for_prediction["odds"].dropna().empty
     ):
         value_bets_df = identify_value_bets(
-            df_final_for_prediction, individual_predictions["rf_included"], target_mode
+            df_final_for_prediction, individual_predictions[all_models[target_mode]["rf_included"]["model_path"]], target_mode
         )
 
         print("\n--- Value Betting Analysis ---")

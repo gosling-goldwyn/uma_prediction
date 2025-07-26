@@ -1,4 +1,6 @@
 import numpy as np
+import json
+import os
 
 def ensemble_predictions(all_model_predictions, target_mode):
     if not all_model_predictions:
@@ -6,32 +8,48 @@ def ensemble_predictions(all_model_predictions, target_mode):
 
     # Get the number of horses from any prediction
     num_horses = len(list(all_model_predictions.values())[0])
-    
-    # Initialize averaged probabilities
+
+    # Initialize weighted probabilities
     if target_mode == "default":
         # 3 classes: 0 (1st), 1 (2-3rd), 2 (Others)
-        avg_probabilities = np.zeros((num_horses, 3))
+        weighted_probabilities = np.zeros((num_horses, 3))
     elif target_mode == "top3":
         # 2 classes: 0 (1-3rd), 1 (Others)
-        avg_probabilities = np.zeros((num_horses, 2))
+        weighted_probabilities = np.zeros((num_horses, 2))
     else:
         raise ValueError(f"Unknown target_mode: {target_mode}")
 
-    # Sum probabilities from all models
-    valid_models_count = 0
-    for model_key, preds in all_model_predictions.items():
+    total_weight = 0
+    for model_path, preds in all_model_predictions.items():
         if preds is not None and len(preds) == num_horses:
-            avg_probabilities += preds
-            valid_models_count += 1
-        else:
-            print(f"Warning: Skipping invalid predictions from {model_key}")
+            # Load metrics for weighting
+            metrics_path = model_path + ".metrics.json"
+            weight = 1.0  # Default weight if metrics not found or F1 score is missing
+            if os.path.exists(metrics_path):
+                try:
+                    with open(metrics_path, 'r') as f:
+                        metrics = json.load(f)
+                    if 'f1_score' in metrics and metrics['f1_score'] is not None:
+                        weight = metrics['f1_score']
+                        print(f"Using F1 score {weight:.4f} as weight for model: {os.path.basename(model_path)}")
+                    else:
+                        print(f"Warning: F1 score not found or is None in {metrics_path}. Using default weight 1.0.")
+                except Exception as e:
+                    print(f"Error loading metrics from {metrics_path}: {e}. Using default weight 1.0.")
+            else:
+                print(f"Warning: Metrics file not found for {model_path}. Using default weight 1.0.")
 
-    if valid_models_count == 0:
-        print("Error: No valid model predictions to ensemble.")
+            weighted_probabilities += preds * weight
+            total_weight += weight
+        else:
+            print(f"Warning: Skipping invalid predictions from {model_path}")
+
+    if total_weight == 0:
+        print("Error: No valid model predictions to ensemble or total weight is zero.")
         return ["Error"] * num_horses
 
-    # Average the probabilities
-    avg_probabilities /= valid_models_count
+    # Normalize the weighted probabilities
+    avg_probabilities = weighted_probabilities / total_weight
 
     final_predictions = [""] * num_horses
 
