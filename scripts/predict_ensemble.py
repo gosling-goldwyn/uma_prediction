@@ -2,6 +2,10 @@ import sys
 import pandas as pd
 import re
 import numpy as np
+import warnings
+
+# Suppress FutureWarning from pandas
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # GPUが利用可能か確認し、設定を行う
 import tensorflow as tf
@@ -10,11 +14,13 @@ physical_devices = tf.config.list_physical_devices("GPU")
 if physical_devices:
     try:
         tf.config.experimental.set_memory_growth(physical_devices[0], True)
-        print("GPU is available and memory growth is enabled.")
+        # print("GPU is available and memory growth is enabled.") # Suppressed
     except:
-        print("Could not set GPU memory growth.")
+        # print("Could not set GPU memory growth.") # Suppressed
+        pass
 else:
-    print("No GPU devices found. Using CPU.")
+    # print("No GPU devices found. Using CPU.") # Suppressed
+    pass
 
 from scripts.prediction_utils.model_loader import load_all_models
 from scripts.prediction_utils.constants import (
@@ -37,9 +43,9 @@ from scripts.prediction_utils.value_betting import identify_value_bets
 
 # --- Main Logic for Ensemble Prediction ---
 def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
-    print(
-        f"Starting scraping and ensemble prediction for race: {race_url} with target mode: {target_mode}..."
-    )
+    # print( # Suppressed
+    #     f"Starting scraping and ensemble prediction for race: {race_url} with target mode: {target_mode}..."
+    # )
 
     all_models = load_all_models()
     if not all_models or not all_models[target_mode]:
@@ -135,9 +141,9 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         )
 
         if horse_data_from_parquet.empty:
-            print(
-                f"Warning: No historical data found for horse '{horse_name}' in parquet. Filling with defaults."
-            )
+            # print( # Suppressed
+            #     f"Warning: No historical data found for horse '{horse_name}' in parquet. Filling with defaults."
+            # )
             # Define default values based on expected data types
             extracted_index_data = {col: np.nan for col in INDEX_HEAD}
 
@@ -192,7 +198,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         return
     df_final_for_prediction = pd.DataFrame(all_race_data, columns=FINAL_COLS)
 
-    print("Preprocessing data for all models...")
+    # print("Preprocessing data for all models...") # Suppressed
     preprocessed_data_for_models = {}
 
     # Preprocess for RF models
@@ -251,35 +257,35 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
             imputation_values=cnn_imputation_values,
         )
 
-    print("Making predictions with individual models...")
+    # print("Making predictions with individual models...") # Suppressed
 
     # --- DEBUGGING STEP ---
-    print("\n--- DEBUGGING CATEGORICAL FEATURES ---")
-    for model_key, data in preprocessed_data_for_models.items():
-        if 'lgbm' in model_key:
-            print(f"\n[DEBUG] Inspecting data for: {model_key}")
-            if isinstance(data, pd.DataFrame):
-                cat_cols = [col for col in data.columns if data[col].dtype.name == 'category']
-                if not cat_cols:
-                    print("No categorical columns found in preprocessed data.")
-                for col in cat_cols:
-                    print(f"  - Column: {col}")
-                    print(f"    - Dtype: {data[col].dtype}")
-                    # Limit printing categories if there are too many
-                    if len(data[col].cat.categories) > 50:
-                         print(f"    - Categories ({len(data[col].cat.categories)} total): {data[col].cat.categories[:25].tolist()}... (truncated)")
-                    else:
-                         print(f"    - Categories: {data[col].cat.categories.tolist()}")
-            else:
-                print("Preprocessed data is not a DataFrame.")
-    print("--- END DEBUGGING ---\n")
+    # print("\n--- DEBUGGING CATEGORICAL FEATURES ---") # Suppressed
+    # for model_key, data in preprocessed_data_for_models.items(): # Suppressed
+    #     if 'lgbm' in model_key: # Suppressed
+    #         print(f"\n[DEBUG] Inspecting data for: {model_key}") # Suppressed
+    #         if isinstance(data, pd.DataFrame): # Suppressed
+    #             cat_cols = [col for col in data.columns if data[col].dtype.name == 'category'] # Suppressed
+    #             if not cat_cols: # Suppressed
+    #                 print("No categorical columns found in preprocessed data.") # Suppressed
+    #             for col in cat_cols: # Suppressed
+    #                 print(f"  - Column: {col}") # Suppressed
+    #                 print(f"    - Dtype: {data[col].dtype}") # Suppressed
+    #                 # Limit printing categories if there are too many # Suppressed
+    #                 if len(data[col].cat.categories) > 50: # Suppressed
+    #                      print(f"    - Categories ({len(data[col].cat.categories)} total): {data[col].cat.categories[:25].tolist()}... (truncated)") # Suppressed
+    #                 else: # Suppressed
+    #                      print(f"    - Categories: {data[col].cat.categories.tolist()}") # Suppressed
+    #         else: # Suppressed
+    #             print("Preprocessed data is not a DataFrame.") # Suppressed
+    # print("--- END DEBUGGING ---\n") # Suppressed
     # --- END DEBUGGING STEP ---
 
     individual_predictions = predict_with_all_models(
         all_models, preprocessed_data_for_models, target_mode
     )
 
-    print("Ensembling predictions...")
+    # print("Ensembling predictions...") # Suppressed
     final_predicted_ranks = ensemble_predictions(individual_predictions, target_mode)
 
     print("\n--- Ensemble Prediction Results ---")
@@ -312,6 +318,82 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         print(
             "Odds data not available or invalid for this race. Skipping value betting analysis."
         )
+        value_bets_df = pd.DataFrame() # empty dataframe
+
+    # Generate and display betting slips
+    from scripts.prediction_utils.betting_slip_generator import generate_betting_slips, suggest_bet_types
+    
+    # Classify horses as favorite, contender, or long shot
+    df_final_for_prediction['horse_class'] = 'other' # Initialize
+    
+    favorites = []
+    contenders = []
+    long_shots = []
+
+    for i, (_, row) in enumerate(df_final_for_prediction.iterrows()):
+        horse_name = row['horse_name']
+        predicted_rank = final_predicted_ranks[i]
+        is_value_bet = False
+        model_prob = 0.0 # Initialize model_prob
+        if not value_bets_df.empty:
+            value_bet_row = value_bets_df[value_bets_df['horse_name'] == horse_name]
+            if not value_bet_row.empty:
+                is_value_bet = value_bet_row['is_value_bet'].iloc[0]
+                model_prob = value_bet_row['model_prob'].iloc[0] # Get model_prob
+
+        if predicted_rank == "1st":
+            favorites.append(horse_name)
+            df_final_for_prediction.loc[df_final_for_prediction['horse_name'] == horse_name, 'horse_class'] = 'favorite'
+        elif predicted_rank == "2-3rd":
+            contenders.append(horse_name)
+            df_final_for_prediction.loc[df_final_for_prediction['horse_name'] == horse_name, 'horse_class'] = 'contender'
+        elif predicted_rank == "Others" and is_value_bet and model_prob >= 0.1: # Added model_prob condition
+            long_shots.append(horse_name)
+            df_final_for_prediction.loc[df_final_for_prediction['horse_name'] == horse_name, 'horse_class'] = 'long_shot'
+
+    print("\n--- 本命・対抗・穴馬 ---")
+    if favorites:
+        print(f"本命: {', '.join(favorites)}")
+    else:
+        print("本命: なし")
+    if contenders:
+        print(f"対抗: {', '.join(contenders)}")
+    else:
+        print("対抗: なし")
+    if long_shots:
+        print(f"穴馬: {', '.join(long_shots)}")
+    else:
+        print("穴馬: なし")
+
+    print("\n--- Betting Slip Suggestions ---")
+    
+    suggested_bet_types = suggest_bet_types(value_bets_df, len(df_final_for_prediction))
+
+    if not suggested_bet_types:
+        print("No betting types suggested based on analysis.")
+    else:
+        print(f"Suggested Bet Types: {', '.join(suggested_bet_types)}")
+        for bet_type in suggested_bet_types:
+            slips = generate_betting_slips(final_predicted_ranks, value_bets_df, df_final_for_prediction, df_final_for_prediction, bet_type=bet_type)
+            if slips:
+                print(f"\n--- {bet_type.capitalize()} Bets ---")
+                if bet_type in ["win", "place"]:
+                    for slip in slips:
+                        print(f"  - 馬名: {slip['horse_name']}, オッズ: {slip['odds']:.2f}, 期待値: {slip['expected_value']:.2f}, 推定払戻: {slip['estimated_payout']:.2f}")
+                else: # For multi-horse bets (wide, umaren, umatan, quinella, trio, trifecta)
+                    all_horse_names_in_bet_type = set()
+                    min_estimated_payout = float('inf')
+                    for slip in slips:
+                        all_horse_names_in_bet_type.update(slip['horse_names'])
+                        min_estimated_payout = min(min_estimated_payout, slip['estimated_payout'])
+                    
+                    # Get horse numbers for the collected horse names
+                    horse_name_to_num_map = df_final_for_prediction.set_index('horse_name')['horse_num'].to_dict()
+                    horse_numbers = sorted([horse_name_to_num_map[name] for name in all_horse_names_in_bet_type])
+                    
+                    print(f"  - 対象馬番: {' '.join(map(str, horse_numbers))} (ボックス), 推定払戻(最小): {min_estimated_payout:.2f}")
+            else:
+                print(f"No {bet_type} bets generated.")
 
 
 if __name__ == "__main__":

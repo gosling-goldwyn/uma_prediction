@@ -47,7 +47,13 @@ def identify_value_bets(df_race_data: pd.DataFrame, model_predictions: np.ndarra
     # Calculate expected value (model_prob / implied_prob)
     df_value_bets['expected_value'] = df_value_bets['model_prob'] / df_value_bets['implied_prob']
 
-    # Identify value bets
-    df_value_bets['is_value_bet'] = df_value_bets['expected_value'] > value_threshold
+    # Identify value bets based on the threshold
+    potential_value_bets = df_value_bets[df_value_bets['expected_value'] > value_threshold]
+
+    # Select up to top 3 potential value bets based on expected value
+    top_value_bets = potential_value_bets.nlargest(3, 'expected_value')
+
+    # Create the 'is_value_bet' column
+    df_value_bets['is_value_bet'] = df_value_bets.index.isin(top_value_bets.index)
 
     return df_value_bets
