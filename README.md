@@ -37,6 +37,7 @@
     │   ├── train_colab.py  # Colab+Hugging Face学習用
     │   └── training_utils.py
     └── prediction_utils/   # 推論関連ユーティリティ
+        ├── betting_slip_generator.py # 買い目生成
         ├── constants.py
         ├── data_preprocessor.py
         ├── ensembler.py
@@ -72,6 +73,7 @@ Netkeiba.comから競馬のレースデータを自動的に収集します。
 *   **アンサンブル推論**: `scripts/predict_ensemble.py` を使用し、複数のモデルの予測を統合して最終的な予測結果を出力します。バリューベッティング分析も行います。
 *   **各モデル独立推論**: `scripts/predict_latest_race.py` を使用し、各モデル（RandomForest、LightGBM、CNN）が算出した個別の予測確率を出力します。
 *   **手動入力推論**: `scripts/predict_manual_input.py` を使用し、ユーザーが手動で入力したデータに基づいて予測を実行します。
+*   **買い目生成**: `scripts/predict_ensemble.py` は、バリューベット分析に基づいて、単勝、複勝、ワイド、馬連、馬単、三連複、三連単などの買い目を自動で生成します。
 
 ### その他
 
@@ -163,7 +165,7 @@ uv run python download_models.py
 
 ### 5. モデルによる推論
 
-#### アンサンブル推論
+#### アンサンブル推論と買い目生成
 
 ```bash
 uv run -m scripts.predict_ensemble <Netkeibaの出馬表URL> [target_mode]
@@ -172,9 +174,10 @@ uv run -m scripts.predict_ensemble <Netkeibaの出馬表URL> [target_mode]
 例:
 
 ```bash
-uv run -m scripts.predict_ensemble https://race.netkeiba.com/race/shutuba.html?race_id=202405040811
+uv run -m scripts.predict_ensemble https://example.com/race/shutuba.html?race_id=YYYYMMDDXXXX
 ```
 
+このコマンドは、アンサンブル予測、バリューベット分析、そして推奨される買い目を出力します。
 `target_mode`を指定することも可能です（`default`または`top3`）。デフォルトは`default`です。
 
 #### 各モデル独立推論
@@ -186,7 +189,7 @@ uv run -m scripts.predict_latest_race <Netkeibaの出馬表URL> [target_mode]
 例:
 
 ```bash
-uv run -m scripts.predict_latest_race https://race.netkeiba.com/race/shutuba.html?race_id=202405040811
+uv run -m scripts.predict_latest_race https://example.com/race/shutuba.html?race_id=YYYYMMDDXXXX
 ```
 
 `target_mode`を指定することも可能です（`default`または`top3`）。デフォルトは`default`です。
@@ -209,8 +212,8 @@ uv run -m scripts.predict_manual_input
 uv run -m scripts.data_acquisition.main_scraper
 uv run -m scripts.data_acquisition.scraping_speed_index
 uv run -m scripts.model_training.train
-uv run -m scripts.predict_ensemble https://race.netkeiba.com/race/shutuba.html?race_id=202405040811
-uv run -m scripts.predict_latest_race https://race.netkeiba.com/race/shutuba.html?race_id=202405040811
+uv run -m scripts.predict_ensemble https://example.com/race/shutuba.html?race_id=YYYYMMDDXXXX
+uv run -m scripts.predict_latest_race https://example.com/race/shutuba.html?race_id=YYYYMMDDXXXX
 ```
 
 ## 貢献
