@@ -206,6 +206,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         model_key = f"rf_{horse_info}"
         if model_key in all_models[target_mode]:
             rf_target_maps = all_models[target_mode][model_key].get("target_maps")
+            rf_imputation_map = all_models[target_mode][model_key].get("imputation_map")
             # Exclude horse info if needed for preprocessing
             df_rf_prep = df_final_for_prediction.copy()
             if horse_info == "excluded":
@@ -218,8 +219,9 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
                 "rf",
                 target_maps=rf_target_maps,
                 expected_columns=all_models[target_mode][model_key].get(
-                    "expected_columns"
+                    "feature_columns"  # Corrected key from "expected_columns"
                 ),
+                imputation_map=rf_imputation_map
             )
 
     # Preprocess for LGBM models
@@ -241,6 +243,7 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
                 categorical_features_with_categories=all_models[target_mode][
                     model_key
                 ].get("categorical_features_with_categories"),
+                imputation_map=all_models[target_mode][model_key].get("imputation_map")
             )
 
     # Preprocess for CNN model
@@ -250,11 +253,13 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
         cnn_imputation_values = all_models[target_mode][model_key].get(
             "imputation_values"
         )
+        cnn_imputation_map = all_models[target_mode][model_key].get("imputation_map")
         preprocessed_data_for_models[model_key] = preprocess_data_for_prediction(
             df_final_for_prediction.copy(),
             "cnn",
             flat_features_columns=cnn_flat_features,
             imputation_values=cnn_imputation_values,
+            imputation_map=cnn_imputation_map
         )
 
     # print("Making predictions with individual models...") # Suppressed

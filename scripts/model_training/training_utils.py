@@ -96,7 +96,7 @@ else:
 TRAINING_STATUS_FILE = "data/training_status.json"
 
 
-def get_model_path(model_type, target_mode, horse_info="included"):
+def get_model_path(model_type, target_mode, horse_info="included", fine_tune_suffix=""):
     horse_info_suffix = ""
     if model_type != "cnn":
         horse_info_suffix = "" if horse_info == "included" else "_no_horse_info"
@@ -107,7 +107,7 @@ def get_model_path(model_type, target_mode, horse_info="included"):
         "keras" if model_type == "cnn" else "pkl" if model_type == "rf" else "txt"
     )
 
-    return f"models/{model_type}_uma_prediction_model_{target_mode}{model_suffix}.{extension}"
+    return f"models/{model_type}_uma_prediction_model_{target_mode}{model_suffix}{fine_tune_suffix}.{extension}"
 
 
 def update_training_status(status_data):
@@ -169,6 +169,7 @@ def preprocess_data(
     df["jockey_place"] = df["jockey"].astype(str) + "_" + df["place"].astype(str)
     df["horse_place"] = df["horse_name"].astype(str) + "_" + df["place"].astype(str)
     df["horse_dist"] = df["horse_name"].astype(str) + "_" + df["dist"].astype(str)
+    df["place_dist"] = df["place"].astype(str) + "_" + df["dist"].astype(str)
 
     # Domain knowledge features
     df["weight_ratio"] = df["weight_carry"] / df["horse_weight"]
@@ -181,17 +182,16 @@ def preprocess_data(
     y = df["target"]
 
     # Fill missing values for all types
+    imputation_map = {}
     for col in X.columns:
         if pd.api.types.is_numeric_dtype(X[col]):
-            if X[col].isnull().all():
-                X[col] = X[col].fillna(0)
-            else:
-                X[col] = X[col].fillna(X[col].median())
+            value = X[col].median() if not X[col].isnull().all() else 0
+            X[col] = X[col].fillna(value)
+            imputation_map[col] = value
         else:
-            if X[col].isnull().all():
-                X[col] = X[col].fillna("missing")
-            else:
-                X[col] = X[col].fillna(X[col].mode()[0])
+            value = X[col].mode()[0] if not X[col].isnull().all() else "missing"
+            X[col] = X[col].fillna(value)
+            imputation_map[col] = value
 
     if model_type == "rf":
         high_cardinality_features = [
@@ -217,7 +217,7 @@ def preprocess_data(
             if X[col].dtype == "object" and col not in high_cardinality_features
         ]
         X = pd.get_dummies(X, columns=low_cardinality_features, dummy_na=False)
-        return X, y, target_maps
+        return X, y, target_maps, imputation_map
 
     elif model_type == "lgbm":
         categorical_features = [col for col in X.columns if X[col].dtype == "object"]
@@ -242,7 +242,7 @@ def preprocess_data(
             categorical_features_with_categories[col] = all_categories
 
         # print(f"Categorical features with categories for LGBM: {categorical_features_with_categories}")
-        return X, y, categorical_features_with_categories
+        return X, y, categorical_features_with_categories, imputation_map
 
     elif model_type == "cnn":
         sequence_features = [
@@ -322,8 +322,9 @@ def preprocess_data(
             [X_seq, X_flat],
             y_cnn,
             X_flat.columns.tolist(),
-            imputation_values,
+            imputation_values, # Note: This is different from imputation_map, specific to CNN
             class_weight_dict,
+            imputation_map, # Return the general imputation map as well
         )
 
     else:
@@ -402,7 +403,12 @@ def train_model(
         print(f"No data to train the {model_type} model. Exiting training.")
         return 0.0
 
-    model_path = get_model_path(model_type, target_mode, horse_info)
+    model_path = get_model_path(
+        model_type,
+        target_mode,
+        horse_info,
+        fine_tune_suffix=kwargs.get("fine_tune_suffix", ""),
+    )
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
     if model_type == "cnn":
@@ -439,6 +445,8 @@ def train_model(
         model.save(model_path)
         with open(model_path + ".flat_features.json", "w") as f:
             json.dump(kwargs["flat_features_columns"], f)
+        with open(model_path + ".imputation.json", "w") as f:
+            json.dump(kwargs["imputation_map"], f)
         with open(model_path + ".imputation_values.json", "w") as f:
             json.dump(kwargs["imputation_values"], f)
 
@@ -549,6 +557,8 @@ def train_model(
             joblib.dump({"model": model, "calibrators": calibrators}, model_path)
             with open(model_path + ".feature_columns.json", "w") as f:
                 json.dump(X_train.columns.tolist(), f)
+            with open(model_path + ".imputation.json", "w") as f:
+                json.dump(kwargs["imputation_map"], f)
             if "target_maps" in kwargs:
                 with open(model_path + ".target_maps.json", "w") as f:
                     json.dump(kwargs["target_maps"], f)
@@ -628,30 +638,45 @@ def train_model(
             return accuracy
 
         elif model_type == "lgbm":
-            lgbm_params = {
-                "objective": "multiclass",
-                "num_class": len(np.unique(y_train)),
-                "metric": "multi_logloss",
-                "boosting_type": "gbdt",
-                "n_jobs": -1,
-                "seed": 42,
-                "verbose": -1,
-                "class_weight": "balanced",
-            }
-            if params:
-                lgbm_params.update(params)
+            if kwargs.get("base_model_path"):
+                base_model_path = kwargs.get("base_model_path")
+                print(f"Loading base LGBM model from {base_model_path} for fine-tuning...")
+                model = joblib.load(base_model_path)
+                # For fine-tuning, we just continue fitting the loaded model
+                model.fit(
+                    X_train,
+                    y_train,
+                    eval_set=[(X_test, y_test)],
+                    categorical_feature=kwargs["categorical_features"],
+                    callbacks=[lgb.early_stopping(10, verbose=True)],
+                )
+            else:
+                lgbm_params = {
+                    "objective": "multiclass",
+                    "num_class": len(np.unique(y_train)),
+                    "metric": "multi_logloss",
+                    "boosting_type": "gbdt",
+                    "n_jobs": -1,
+                    "seed": 42,
+                    "verbose": -1,
+                    "class_weight": "balanced",
+                }
+                if params:
+                    lgbm_params.update(params)
 
-            model = lgb.LGBMClassifier(**lgbm_params)
-            model.fit(
-                X_train,
-                y_train,
-                eval_set=[(X_test, y_test)],
-                categorical_feature=kwargs["categorical_features"],
-                callbacks=[lgb.early_stopping(10, verbose=True)],
-            )
+                model = lgb.LGBMClassifier(**lgbm_params)
+                model.fit(
+                    X_train,
+                    y_train,
+                    eval_set=[(X_test, y_test)],
+                    categorical_feature=kwargs["categorical_features"],
+                    callbacks=[lgb.early_stopping(10, verbose=True)],
+                )
             joblib.dump(model, model_path)
             with open(model_path + ".feature_columns.json", "w") as f:
                 json.dump(X_train.columns.tolist(), f)
+            with open(model_path + ".imputation.json", "w") as f:
+                json.dump(kwargs["imputation_map"], f)
             # カテゴリカル特徴量のカテゴリ情報を保存
             if "categorical_features_with_categories" in kwargs:
                 save_lgbm_categorical_features(

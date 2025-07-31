@@ -60,30 +60,30 @@ if __name__ == "__main__":
     for target_mode in target_modes:
         if model_to_train in ['rf', 'all']:
             # With horse info
-            X_rf, y_rf, target_maps_rf = preprocess_data(
+            X_rf, y_rf, target_maps_rf, imputation_map_rf = preprocess_data(
                 df.copy(), model_type="rf", target_mode=target_mode
             )
-            train_model("rf", X_rf, y_rf, target_mode, target_maps=target_maps_rf, params=params)
+            train_model("rf", X_rf, y_rf, target_mode, target_maps=target_maps_rf, params=params, imputation_map=imputation_map_rf)
 
             # WITHOUT horse info
-            X_rf_no, y_rf_no, target_maps_rf_no = preprocess_data(
+            X_rf_no, y_rf_no, target_maps_rf_no, imputation_map_rf_no = preprocess_data(
                 df.copy(), model_type="rf", target_mode=target_mode, exclude_horse_info=True
             )
             train_model(
-                "rf", X_rf_no, y_rf_no, target_mode, horse_info="excluded", target_maps=target_maps_rf_no, params=params
+                "rf", X_rf_no, y_rf_no, target_mode, horse_info="excluded", target_maps=target_maps_rf_no, params=params, imputation_map=imputation_map_rf_no
             )
 
         if model_to_train in ['lgbm', 'all']:
             # With horse info
-            X_lgbm, y_lgbm, cats_lgbm_with_categories = preprocess_data(
+            X_lgbm, y_lgbm, cats_lgbm_with_categories, imputation_map_lgbm = preprocess_data(
                 df.copy(), model_type="lgbm", target_mode=target_mode
             )
             train_model("lgbm", X_lgbm, y_lgbm, target_mode,
                         categorical_features=[col for col in cats_lgbm_with_categories.keys()],
-                        categorical_features_with_categories=cats_lgbm_with_categories, params=params)
+                        categorical_features_with_categories=cats_lgbm_with_categories, params=params, imputation_map=imputation_map_lgbm)
 
             # WITHOUT horse info
-            X_lgbm_no, y_lgbm_no, cats_lgbm_no_with_categories = preprocess_data(
+            X_lgbm_no, y_lgbm_no, cats_lgbm_no_with_categories, imputation_map_lgbm_no = preprocess_data(
                 df.copy(),
                 model_type="lgbm",
                 target_mode=target_mode,
@@ -91,11 +91,11 @@ if __name__ == "__main__":
             )
             train_model("lgbm", X_lgbm_no, y_lgbm_no, target_mode,
                         categorical_features=[col for col in cats_lgbm_no_with_categories.keys()],
-                        categorical_features_with_categories=cats_lgbm_no_with_categories, horse_info="excluded", params=params)
+                        categorical_features_with_categories=cats_lgbm_no_with_categories, horse_info="excluded", params=params, imputation_map=imputation_map_lgbm_no)
 
         if model_to_train in ['cnn', 'all']:
             # CNN with categorical features
-            X_cnn, y_cnn, flat_cols, imputation_values, class_weight_dict = preprocess_data(
+            X_cnn, y_cnn, flat_cols, imputation_values, class_weight_dict, imputation_map_cnn = preprocess_data(
                 df.copy(), model_type="cnn", target_mode=target_mode
             )
             train_model(
@@ -106,7 +106,8 @@ if __name__ == "__main__":
                 flat_features_columns=flat_cols,
                 imputation_values=imputation_values,
                 class_weight_dict=class_weight_dict,
-                params=params
+                params=params,
+                imputation_map=imputation_map_cnn
             )
 
     print(f"Model training for {model_to_train} finished.")
