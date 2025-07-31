@@ -39,4 +39,9 @@ optimize = "python -m scripts.model_training.optimize"
 train_lgbm_optimized = "python -m scripts.model_training.train --model_type lgbm --params_file params/best_params_lgbm.json"
 train_rf_optimized = "python -m scripts.model_training.train --model_type rf --params_file params/best_params_rf.json"
 train_cnn_optimized = "python -m scripts.model_training.train --model_type cnn --params_file params/best_params_cnn.json"
+train_all_optimized = ["train_rf_optimized", "train_lgbm_optimized", "train_cnn_optimized"]
+fine_tune_lgbm = "python -m scripts.model_training.fine_tune --model_type lgbm --target_mode default --base_model_path models/lgbm_uma_prediction_model_default.txt --filter_place 東京"
+fine_tune_rf = "python -m scripts.model_training.fine_tune --model_type rf --target_mode default --base_model_path models/rf_uma_prediction_model_default.pkl --filter_place 東京"
+fine_tune_cnn = "python -m scripts.model_training.fine_tune --model_type cnn --target_mode default --base_model_path models/cnn_uma_prediction_model_default_with_cat.keras --filter_place 東京"
+fine_tune_all = ["fine_tune_lgbm", "fine_tune_rf", "fine_tune_cnn"]
 predict = "python -m scripts.predict_ensemble https://race.netkeiba.com/race/shutuba.html?race_id=202510020811"

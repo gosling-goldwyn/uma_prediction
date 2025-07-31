@@ -22,8 +22,13 @@ def process_horse_weight(horse_weight_change_str):
         return horse_weight, weight_change
     return np.nan, np.nan
 
-def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_features_columns=None, imputation_values=None, expected_columns=None, categorical_features_with_categories=None):
+def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_features_columns=None, imputation_values=None, expected_columns=None, categorical_features_with_categories=None, imputation_map=None):
     df_processed = df.copy()
+
+    # Drop columns that are not features for prediction
+    # Added 'odds' to the list of columns to be dropped.
+    cols_to_drop = ["rank", "time", "prize", "date", "odds"]
+    df_processed = df_processed.drop(columns=[col for col in cols_to_drop if col in df_processed.columns], errors='ignore')
 
     # Convert 'l_days' to numeric, coercing errors to NaN
     if 'l_days' in df_processed.columns:
@@ -45,41 +50,36 @@ def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_featur
     df_processed['jockey_place'] = df_processed['jockey'].astype(str) + '_' + df_processed['place'].astype(str)
     df_processed['horse_place'] = df_processed['horse_name'].astype(str) + '_' + df_processed['place'].astype(str)
     df_processed['horse_dist'] = df_processed['horse_name'].astype(str) + '_' + df_processed['dist'].astype(str)
+    df_processed['place_dist'] = df_processed['place'].astype(str) + '_' + df_processed['dist'].astype(str)
 
     # Domain knowledge features
     if 'horse_weight' in df_processed.columns and 'weight_carry' in df_processed.columns:
         df_processed['weight_ratio'] = df_processed['weight_carry'] / df_processed['horse_weight']
+    elif 'weight_ratio' not in df_processed.columns:
+        df_processed['weight_ratio'] = 0
 
-    # Ensure imputation_values is a dictionary, even if None is passed
-    imputation_values = imputation_values if imputation_values is not None else {}
+    # Defragment the DataFrame to avoid PerformanceWarning
+    df_processed = df_processed.copy()
 
-    # Common preprocessing steps (from train.py's preprocess_data)
-    # Fill missing values for all types using imputation_values if provided
-    for col in df_processed.columns:
-        if pd.api.types.is_numeric_dtype(df_processed[col]):
-            if col in imputation_values and imputation_values[col] is not None:
-                df_processed[col] = df_processed[col].fillna(imputation_values[col])
-            else:
-                # Fallback to median if imputation_values not provided for this column
-                if df_processed[col].isnull().all():
-                    df_processed[col] = df_processed[col].fillna(0)
-                else:
-                    df_processed[col] = df_processed[col].fillna(df_processed[col].median())
-        else:
-            if col in imputation_values and imputation_values[col] is not None:
-                df_processed[col] = df_processed[col].fillna(imputation_values[col])
-            else:
-                # Fallback to mode if imputation_values not provided for this column
-                if df_processed[col].isnull().all():
-                    df_processed[col] = df_processed[col].fillna("missing")
-                else:
-                    df_processed[col] = df_processed[col].fillna(df_processed[col].mode()[0])
+    # Fill missing values using the imputation_map from training
+    if imputation_map:
+        for col, value in imputation_map.items():
+            if col in df_processed.columns:
+                df_processed[col] = df_processed[col].fillna(value)
 
     if model_type == "rf":
-        high_cardinality_features = ["horse_name", "jockey"]
+        high_cardinality_features = [
+            "horse_name",
+            "jockey",
+            "jockey_place",
+            "horse_place",
+            "horse_dist",
+        ]
         for col in high_cardinality_features:
             if col in df_processed.columns and target_maps and col in target_maps:
-                df_processed[col] = df_processed[col].map(target_maps[col]).fillna(0) # Fallback to 0 if all NaN
+                # Use the mean of the target map as a fallback for unseen values
+                fallback_value = np.mean(list(target_maps[col].values()))
+                df_processed[col] = df_processed[col].map(target_maps[col]).fillna(fallback_value)
             elif col in df_processed.columns: # If no target_maps, fill with 0 or a default
                 df_processed[col] = pd.to_numeric(df_processed[col], errors='coerce').fillna(0)
 
@@ -89,8 +89,12 @@ def preprocess_data_for_prediction(df, model_type, target_maps=None, flat_featur
             if df_processed[col].dtype == "object" and col not in high_cardinality_features
         ]
         df_processed = pd.get_dummies(df_processed, columns=low_cardinality_features, dummy_na=False)
+
+        # Align columns with the training set
         if expected_columns is not None:
+            # Reindex to match the training columns, filling missing ones with 0
             df_processed = df_processed.reindex(columns=expected_columns, fill_value=0)
+
         return df_processed
 
     elif model_type == "lgbm":
