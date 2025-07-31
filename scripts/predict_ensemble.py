@@ -392,11 +392,11 @@ def predict_ensemble_race_from_url(race_url: str, target_mode="default"):
                         all_horse_names_in_bet_type.update(slip['horse_names'])
                         min_estimated_payout = min(min_estimated_payout, slip['estimated_payout'])
                     
-                    # Get horse numbers for the collected horse names
-                    horse_name_to_num_map = df_final_for_prediction.set_index('horse_name')['horse_num'].to_dict()
-                    horse_numbers = sorted([horse_name_to_num_map[name] for name in all_horse_names_in_bet_type])
-                    
-                    print(f"  - 対象馬番: {' '.join(map(str, horse_numbers))} (ボックス), 推定払戻(最小): {min_estimated_payout:.2f}")
+                    # Get horse numbers for the collected horse names (no longer used for display)
+                    # horse_name_to_num_map = df_final_for_prediction.set_index('horse_name')['horse_num'].to_dict()
+                    # horse_numbers = sorted([horse_name_to_num_map[name] for name in all_horse_names_in_bet_type])
+
+                    print(f"  - 対象馬名: {' '.join(sorted(list(all_horse_names_in_bet_type)))} (ボックス), 推定払戻(最小): {min_estimated_payout:.2f}")
             else:
                 print(f"No {bet_type} bets generated.")
 
